@@ -48,6 +48,9 @@ can be built again on other hardware.
 Then put your games in `~/Games/emulation/` and start Kodi. That is the whole
 process.
 
+For Windows and native PC games as well, use `install.sh --with-optional`:
+that adds Wine and builds JoyShockMapper (see *PC games* below).
+
 That adds the libretro PPA, installs the packages in
 `system/packages.required.txt`, creates the directory layout, links the code
 into place, merges `templates/retroarch-settings.conf` into RetroArch's config,
@@ -58,10 +61,45 @@ whatever went wrong.
 Flags: `--dry-run`, `--skip-packages`, `--with-optional` (WineHQ, for the PC
 games support), `--home DIR`.
 
-Then add your own ROMs under `~/Games/emulation/<system>/` and any BIOS files
-under `~/.local/share/retroarch/system/` (see `system/bios-required.txt`). The
-sync timer picks them up within ten minutes, fetches box art, works out player
-counts and rebuilds the Kodi menu.
+## Games
+
+`~/Games/emulation/` has **a folder for every system RetroArch can identify and
+run** -- 124 of them, empty and waiting. Drop a game in and within ten minutes
+(or immediately, with `~/.local/bin/sync_games.py`) it is identified, given box
+art and a player count, and added to the Kodi menu. **The emulator core for a
+system is downloaded the first time you put a game for it in**, so there is
+nothing to install per console.
+
+The folder name is a convention rather than a rule: games are identified by
+hashing them, so one in the "wrong" folder is still filed correctly.
+
+### BIOS files
+
+Some systems cannot run without one -- Sega CD, Saturn, Dreamcast, PlayStation,
+PC Engine CD, 3DO, Lynx and a few more. They go in
+
+    ~/.local/share/retroarch/system/
+
+**not** in the ROM folders, where a stray BIOS looks exactly like a game and is
+deliberately dropped from the playlist. `system/bios-required.txt` lists every
+system that needs one and the exact filename; the same advice is put in that
+folder as a README when you install. And if a game will not start, the launcher
+names the missing file on the television.
+
+### PC games
+
+`~/Games/emulation` is for emulated consoles; `~/Games/pc/` is for everything
+else. Nothing there is scanned -- a PC game is whatever you say it is, declared
+in `~/.local/share/pcgames.json`, which documents its own fields. They appear
+in Kodi behind the PC GAMES entry.
+
+Games with no controller support are still playable with one:
+**JoyShockMapper** maps a pad to keyboard and mouse, per game, loaded while the
+game runs and unloaded afterwards. It is built from source by
+`install/joyshockmapper.sh` because the Linux port needs patches
+(`system/joyshockmapper/`, pinned to an upstream commit), and 35 ready-made
+mappings are installed with it. The CONTROLLER entry on the Kodi home menu
+edits them with a controller, so that needs no keyboard either.
 
 ### adopt.sh
 
