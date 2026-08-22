@@ -78,6 +78,34 @@ exec ./JoyShockMapper "$@"
 LAUNCH
 chmod +x "$HOME/.local/bin/joyshockmapper"
 
+# --- permission to create a virtual keyboard and mouse ----------------------
+# JoyShockMapper works by making a virtual input device, which needs write
+# access to /dev/uinput. Without this it starts, prints "Failed to create
+# virtual device: Permission denied", and then does nothing at all -- which
+# looks like the controller not working rather than a permission problem.
+RULE=/etc/udev/rules.d/50-joyshockmapper.rules
+if [ ! -f "$RULE" ] && [ -f "$REPO/system/udev/50-joyshockmapper.rules" ]; then
+  if sudo -n true 2>/dev/null || sudo -v; then
+    sudo cp "$REPO/system/udev/50-joyshockmapper.rules" "$RULE"
+    sudo udevadm control --reload-rules 2>/dev/null
+    sudo udevadm trigger --subsystem-match=misc --sysname-match=uinput 2>/dev/null
+    ok "installed the udev rule for /dev/uinput and controllers"
+  else
+    warn "could not install $RULE (needs sudo); JoyShockMapper will not be able"
+    echo "         to create its virtual device until it is there"
+  fi
+fi
+# uinput is a module, and is not loaded on a machine that has never needed it.
+if ! lsmod 2>/dev/null | grep -q "^uinput"; then
+  sudo modprobe uinput 2>/dev/null && ok "loaded the uinput module"
+  echo uinput | sudo tee /etc/modules-load.d/uinput.conf >/dev/null 2>&1 &&
+    ok "and it will load at boot"
+fi
+if ! id -nG | tr " " "\n" | grep -qx input; then
+  sudo usermod -aG input "$USER" 2>/dev/null &&
+    warn "added you to the 'input' group -- log out and back in for it to apply"
+fi
+
 # The ready-made mappings.
 if [ -d "$REPO/assets/joyshockmapper" ]; then
   mkdir -p "$HOME/.config/JoyShockMapper"
