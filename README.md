@@ -123,8 +123,14 @@ kernel you booted, so an HWE kernel or one upgraded since the last reboot lands
 exactly there. The setup script tests by running `usbip`, not by looking for
 the file, and installs `linux-tools-$(uname -r)` when it has to.
 
-The other end still needs `usbipd` running and passwordless sudo for `usbip`,
-plus the key printed at the end of the setup script.
+It also generates `~/.ssh/id_ed25519_usbip`, the key the add-on uses for the
+server and nothing else, and then prints the two steps that remain. Both of
+those are typed **here** as well, even though they act on the server:
+`ssh-copy-id` to install that key there, and an `ssh` session to give the
+server the usbip tools, a running `usbipd`, and passwordless sudo for its own
+`usbip` binary — whose path differs by distro, so check it with
+`command -v usbip` on that machine. Check setup inside the add-on lists the
+same three steps.
 
 ### adopt.sh
 

@@ -103,6 +103,24 @@ else
     echo "  WARNING: no ssh client, the Pi side cannot be controlled" >&2
 fi
 
+echo "== ssh key =="
+# The add-on drives the server as this user over ssh, with a key of its own so
+# it is never tangled up with the user's other keys. Nothing else creates it,
+# and the instructions at the end are useless without it.
+USER_HOME="$(getent passwd "$USER_NAME" | cut -d: -f6)"
+KEY="${USER_HOME:-/home/$USER_NAME}/.ssh/id_ed25519_usbip"
+if [ -f "$KEY" ]; then
+    echo "  $KEY already there"
+elif [ -z "$USER_HOME" ] || [ ! -d "$USER_HOME" ]; then
+    echo "  WARNING: no home directory for $USER_NAME, cannot make a key" >&2
+else
+    # As the user, not root -- root-owned keys in their ~/.ssh help nobody.
+    sudo -u "$USER_NAME" mkdir -pm 700 "$USER_HOME/.ssh"
+    sudo -u "$USER_NAME" ssh-keygen -q -t ed25519 -N "" -f "$KEY" \
+        -C "usbip-kodi@$(hostname)"
+    echo "  created $KEY"
+fi
+
 echo "== vhci-hcd module =="
 # vhci-hcd is the client half of USB/IP: it presents the remote device as a
 # local virtual USB port. usbip_host is the server half and is not needed here.
@@ -155,5 +173,13 @@ else
 fi
 
 echo
-echo "Client side ready. The remaining step is on the Pi:"
-echo "  ssh-copy-id -i /home/$USER_NAME/.ssh/id_ed25519_usbip.pub <piuser>@192.0.2.10"
+echo "This machine is ready. Two things left -- both typed HERE, not there:"
+echo
+echo "  1. put this machine's key on the server:"
+echo "       ssh-copy-id -i $KEY.pub USER@SERVER"
+echo
+echo "  2. set the server up, over ssh from here:"
+echo "       ssh USER@SERVER"
+echo "     it needs the usbip tools installed, usbipd running, and"
+echo "     passwordless sudo for its usbip binary. That path differs by"
+echo "     distro, so check it there with: command -v usbip"

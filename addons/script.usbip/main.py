@@ -389,12 +389,22 @@ def check_screen(host=None):
         problems = U.check_host(host["ip"], host["user"])
         lines += ["   OK"] if not problems else ["   %s" % p for p in problems]
     progress.close()
-    lines += ["", "", "Setup, if something above is missing:", "",
-              "  On this machine:",
-              "     sudo ~/.local/bin/usbip-setup-root.sh", "",
-              "  On the server, once:",
-              "     ssh-copy-id -i ~/.ssh/id_ed25519_usbip.pub USER@HOST",
-              "     and give it passwordless sudo for usbip"]
+    # Every one of these is typed on this machine, including the two that
+    # act on the server -- saying "on the server" made it read as though it
+    # had to be typed there.
+    lines += ["", "", "Setup, if something above is missing.",
+              "All of it is typed here, on this machine:", "",
+              "  1. install the tools, allow usbip through sudo,",
+              "     and make the ssh key:",
+              "       sudo ~/.local/bin/usbip-setup-root.sh", "",
+              "  2. put this machine's key on the server:",
+              "       ssh-copy-id -i ~/.ssh/id_ed25519_usbip.pub USER@HOST",
+              "", "  3. set the server up, over ssh from here:",
+              "       ssh USER@HOST",
+              "     it needs the usbip tools installed, usbipd running,",
+              "     and passwordless sudo for its usbip binary. That path",
+              "     differs by distro -- check it there with:",
+              "       command -v usbip"]
     dlg().textviewer(TITLE, "\n".join(lines), usemono=True)
 
 
