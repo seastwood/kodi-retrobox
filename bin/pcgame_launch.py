@@ -119,6 +119,11 @@ def set_mode(geom):
 
 JSM_BIN = "/home/retro/.local/lib/joyshockmapper/JoyShockMapper"
 HUD_BIN = "/home/retro/.local/bin/jsm-hud"
+# Used when a game names no config of its own. Every PC game gets a controller
+# mapping and the on-screen reference, not just the ones somebody has written a
+# config for: a new game is playable with a pad the moment it is added, and the
+# HUD is there to show what the buttons do and to change them.
+DEFAULT_JSM = "/home/retro/.config/JoyShockMapper/games/_default.txt"
 
 # JSM takes commands on stdin and reports on stdout. Both are made reachable
 # from outside this process so the HUD can drive JSM and watch what it loads:
@@ -486,8 +491,11 @@ def main():
     # still on screen for the games that do not set stop_kodi -- that receives
     # the synthesised mouse and keys, and a stray click on the PC GAMES list
     # silently launches another game.
-    jsm = start_jsm(args.jsm)
-    hud = start_hud(args.jsm) if jsm else None
+    config = args.jsm
+    if not config and os.path.exists(DEFAULT_JSM):
+        config = DEFAULT_JSM
+    jsm = start_jsm(config)
+    hud = start_hud(config) if jsm else None
 
     # Call of Duty 4 maps a small secondary window *after* its render window,
     # and it lands on top as a black rectangle over the game. Keep pushing any
@@ -506,7 +514,7 @@ def main():
     last_revive = 0.0
     revives = 0
     while proc.poll() is None:
-        if args.jsm:
+        if config:
             now = time.time()
             if now >= next_health:
                 next_health = now + HEALTH_INTERVAL
@@ -526,7 +534,7 @@ def main():
                     revives = 0
             if jsm is not None and jsm.poll() is not None:
                 # JSM itself died -- start it again with the same config.
-                jsm = start_jsm(args.jsm)
+                jsm = start_jsm(config)
                 signature = controller_signature()
                 pending = None
             else:

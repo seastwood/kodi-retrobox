@@ -1,0 +1,68 @@
+#!/bin/bash
+# Show, hide or toggle the on-screen keyboard.
+#
+#   osk-toggle          toggle   (what the F13 keyboard shortcut uses)
+#   osk-toggle show
+#   osk-toggle hide
+#
+# Explicit verbs exist because callers that want a definite state cannot use a
+# toggle: jsm-hud raises the keyboard for a rebind and hides it afterwards, and
+# if the keyboard happened to be up already a toggle would invert both --
+# hiding it when asked to show, then showing it when asked to hide, leaving it
+# stuck up with no obvious way to dismiss it.
+#
+# Bound to F13 in the XFCE keyboard shortcuts, and F13 is what the controller
+# sends on "-" + D-pad Left. F13 is used because no physical keyboard here has
+# one, so nothing else can trigger it by accident.
+export DISPLAY="${DISPLAY:-:0}"
+
+ACTION="${1:-toggle}"
+DEST=org.onboard.Onboard
+OBJ=/org/onboard/Onboard/Keyboard
+IFACE=org.onboard.Onboard.Keyboard
+
+call() {
+    dbus-send --type=method_call --dest="$DEST" "$OBJ" "$IFACE.$1" 2>/dev/null
+}
+
+running() {
+    pgrep -x onboard >/dev/null 2>&1
+}
+
+wait_for_bus() {
+    for _ in $(seq 1 40); do
+        if dbus-send --type=method_call --print-reply \
+            --dest=org.freedesktop.DBus /org/freedesktop/DBus \
+            org.freedesktop.DBus.NameHasOwner string:"$DEST" 2>/dev/null \
+            | grep -q "boolean true"; then
+            return 0
+        fi
+        sleep 0.25
+    done
+    return 1
+}
+
+case "$ACTION" in
+    hide)
+        running && call Hide
+        exit 0
+        ;;
+    show|toggle)
+        if running; then
+            # Onboard exposes DBus only while running, so this is the normal
+            # path once it has been started once.
+            if [ "$ACTION" = show ]; then call Show; else call ToggleVisible; fi
+            [ $? -eq 0 ] && exit 0
+            # Running but not answering: restart rather than leave a dead window.
+            pkill -x onboard
+            sleep 0.5
+        fi
+        setsid onboard >/dev/null 2>&1 &
+        wait_for_bus && [ "$ACTION" = show ] && call Show
+        exit 0
+        ;;
+    *)
+        echo "usage: $(basename "$0") [show|hide|toggle]" >&2
+        exit 2
+        ;;
+esac

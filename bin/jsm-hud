@@ -1,0 +1,1846 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""On-screen controls reference and live tuning for JoyShockMapper.
+
+Runs alongside a game, started by pcgame_launch.py. Two jobs:
+
+  * a toast when JSM loads a different config, so switching to the desktop
+    layer and back is visible rather than something you infer from behaviour
+  * an overlay, opened by a button combo, showing what every button currently
+    does and letting you change the handful of settings worth changing mid
+    game -- gyro sensitivity, stick speed, calibration
+
+Three things make this possible, each established by testing rather than
+assumption:
+
+  * the controller stays readable over evdev while JSM holds it via hidraw,
+    so the trigger combo is detected here and is NOT limited to the two
+    buttons a JSM binding allows
+  * an override-redirect, keep-above, RGBA window paints over these games --
+    verified over fullscreen Kodi, Quake III and Warcraft III
+  * JSM takes console commands on stdin, so the launcher hands us a fifo and
+    tuning applies instantly with nothing written to disk
+
+Config files are the same ones the Kodi editor reads and writes, so the two
+front ends stay in sync with no extra machinery.
+"""
+
+import argparse
+import os
+import re
+import select
+import shutil
+import struct
+import subprocess
+import sys
+import threading
+import time
+
+sys.path.insert(0, "/home/retro/.local/lib/jsmconfig")
+import jsmconfig as J
+
+import gi
+gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
+from gi.repository import Gtk, Gdk, GLib
+
+# ---------------------------------------------------------------------------
+# controller
+# ---------------------------------------------------------------------------
+
+EVENT_SIZE = 24
+EVENT_FMT = "llHHi"
+EV_KEY = 0x01
+EV_ABS = 0x03
+
+# The d-pad is not buttons: hid-nintendo reports it as a hat, two axes each
+# going -1 / 0 / +1. Navigation has to read those as well as EV_KEY, or
+# nothing on the d-pad ever registers.
+ABS_HAT0X = 0x10
+ABS_HAT0Y = 0x11
+HAT_NAMES = {
+    (ABS_HAT0X, -1): "LEFT", (ABS_HAT0X, 1): "RIGHT",
+    (ABS_HAT0Y, -1): "UP", (ABS_HAT0Y, 1): "DOWN",
+}
+
+# evdev codes for the pad, as hid-nintendo reports them.
+BTN = {
+    "S": 0x130, "E": 0x131, "W": 0x134, "N": 0x133,
+    "L": 0x136, "R": 0x137, "ZL": 0x138, "ZR": 0x139,
+    "-": 0x13a, "+": 0x13b, "HOME": 0x13c, "L3": 0x13d, "R3": 0x13e,
+}
+NAME_BY_CODE = dict((v, k) for k, v in BTN.items())
+
+DEFAULT_COMBO = ["+", "L", "R"]
+
+
+BTN_SOUTH = 0x130
+
+
+def _declares_gamepad_buttons(block):
+    """True if the device's KEY bitmap includes BTN_SOUTH.
+
+    /proc/bus/input/devices prints the bitmap as 64-bit hex words, most
+    significant FIRST, so word i of the bitmap is at position len-1-i.
+    Checking a real gamepad button is what separates a pad from a mouse --
+    the previous test was "has ABS and KEY", which a Logitech mouse also
+    satisfies, so the HUD sat listening to the mouse and no combo ever fired.
+    """
+    match = re.search(r"B: KEY=(.*)", block)
+    if not match:
+        return False
+    try:
+        words = [int(w, 16) for w in match.group(1).split()]
+    except ValueError:
+        return False
+    index, bit = divmod(BTN_SOUTH, 64)
+    if index >= len(words):
+        return False
+    return bool(words[len(words) - 1 - index] >> bit & 1)
+
+
+def find_pad_nodes():
+    """Every gamepad worth listening to, physical ones first.
+
+    Only JoyShockMapper's own devices are excluded: those carry the keyboard
+    and mouse output JSM synthesises from the pad, so reading them back would
+    feed our own output in as input. Sunshine's virtual pad is a real input
+    source -- over Moonlight it is the only one -- and must not be skipped.
+    """
+    physical, virtual = [], []
+    try:
+        with open("/proc/bus/input/devices") as handle:
+            blocks = handle.read().split("\n\n")
+    except OSError:
+        return []
+    for block in blocks:
+        name = re.search(r'N: Name="(.*)"', block)
+        name = name.group(1) if name else ""
+        if name.startswith("JoyShockMapper"):
+            continue
+        if "(IMU)" in name:
+            continue                      # motion axes, no buttons
+        if not _declares_gamepad_buttons(block):
+            continue
+        handlers = re.search(r"H: Handlers=(.*)", block)
+        if not handlers:
+            continue
+        node = None
+        for handler in handlers.group(1).split():
+            if handler.startswith("event"):
+                node = "/dev/input/" + handler
+                break
+        if not node:
+            continue
+        sysfs = re.search(r"S: Sysfs=(.*)", block)
+        is_virtual = bool(sysfs) and \
+            sysfs.group(1).strip().startswith("/devices/virtual/")
+        (virtual if is_virtual else physical).append((name, node))
+    return physical + virtual
+
+
+def find_pad_event_node(prefer=None):
+    """The single best pad, kept for callers that want just one."""
+    nodes = find_pad_nodes()
+    if not nodes:
+        return None
+    if prefer:
+        for name, node in nodes:
+            if prefer.lower() in name.lower():
+                return node
+    return nodes[0][1]
+
+
+def list_input_devices():
+    """Debug aid: what the HUD can see and which one it would use."""
+    try:
+        blocks = open("/proc/bus/input/devices").read().split("\n\n")
+    except OSError:
+        return
+    chosen = set(node for _n, node in find_pad_nodes())
+    for block in blocks:
+        name = re.search(r'N: Name="(.*)"', block)
+        if not name:
+            continue
+        handlers = re.search(r"H: Handlers=(.*)", block)
+        sysfs = re.search(r"S: Sysfs=(.*)", block)
+        node = ""
+        for h in (handlers.group(1).split() if handlers else []):
+            if h.startswith("event"):
+                node = "/dev/input/" + h
+                break
+        print("%-38s %-18s pad=%-5s virtual=%-5s %s"
+              % (name.group(1)[:38], node,
+                 _declares_gamepad_buttons(block),
+                 (sysfs.group(1).strip().startswith("/devices/virtual/")
+                  if sysfs else False),
+                 "<-- WATCHED" if node and node in chosen else ""))
+
+
+class PadWatcher(threading.Thread):
+    """Watches the pad for the trigger combo and, while the overlay is up,
+    for navigation. Reads evdev directly, so it works regardless of which
+    window has X focus."""
+
+    daemon = True
+
+    def __init__(self, combo, on_trigger, on_nav, prefer=None):
+        super().__init__()
+        self.prefer = prefer
+        self.combo = set(BTN[b] for b in combo if b in BTN)
+        self.on_trigger = on_trigger
+        self.on_nav = on_nav
+        self.held = set()
+        self.navigating = False
+        self._fired = False
+        self._stop = threading.Event()
+
+    def stop(self):
+        self._stop.set()
+
+    RESCAN = 3.0                     # seconds between device sweeps
+
+    def run(self):
+        watched = {}                 # fd -> [node, held set]
+        next_scan = 0.0
+        while not self._stop.is_set():
+            now = time.time()
+            if now >= next_scan:
+                next_scan = now + self.RESCAN
+                self._sync(watched)
+            if not watched:
+                time.sleep(0.5)
+                continue
+            ready, _, _ = select.select(list(watched), [], [], 0.5)
+            for fd in ready:
+                entry = watched.get(fd)
+                if entry is None:
+                    continue
+                try:
+                    data = os.read(fd, EVENT_SIZE)
+                except OSError:
+                    self._drop(watched, fd)      # pad went away mid-read
+                    continue
+                if len(data) < EVENT_SIZE:
+                    continue
+                self._handle(entry, data)
+
+    def _sync(self, watched):
+        """Open pads that have appeared, drop ones that have gone."""
+        wanted = dict((node, name) for name, node in find_pad_nodes())
+        for fd in [fd for fd, e in watched.items() if e[0] not in wanted]:
+            self._drop(watched, fd)
+        open_nodes = set(e[0] for e in watched.values())
+        for node in wanted:
+            if node in open_nodes:
+                continue
+            try:
+                fd = os.open(node, os.O_RDONLY | os.O_NONBLOCK)
+            except OSError:
+                continue                 # permissions or a race; try next sweep
+            watched[fd] = [node, set()]
+
+    def _drop(self, watched, fd):
+        watched.pop(fd, None)
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+    def _handle(self, entry, data):
+        _s, _us, etype, code, value = struct.unpack(EVENT_FMT, data)
+        held = entry[1]
+
+        if etype == EV_ABS and code in (ABS_HAT0X, ABS_HAT0Y):
+            # Only the push matters, not the return to centre.
+            name = HAT_NAMES.get((code, 1 if value > 0 else
+                                  -1 if value < 0 else 0))
+            if name and self.navigating:
+                GLib.idle_add(self.on_nav, name)
+            return
+
+        if etype != EV_KEY:
+            return
+        if value:
+            held.add(code)
+        else:
+            held.discard(code)
+
+        # Per device: the combo has to be pressed on one pad, not assembled
+        # from presses spread across two.
+        if self.combo and self.combo.issubset(held):
+            if not self._fired:
+                self._fired = True
+                GLib.idle_add(self.on_trigger)
+        elif not self.combo.issubset(held):
+            self._fired = False
+
+        if self.navigating and value == 1:
+            button = NAME_BY_CODE.get(code)
+            if button:
+                GLib.idle_add(self.on_nav, button)
+
+
+# ---------------------------------------------------------------------------
+# config
+# ---------------------------------------------------------------------------
+
+LABELS = [
+    ("N", "X"), ("E", "A"), ("S", "B"), ("W", "Y"),
+    ("L", "L"), ("R", "R"), ("ZL", "ZL"), ("ZR", "ZR"),
+    ("UP", "D-up"), ("DOWN", "D-down"), ("LEFT", "D-left"), ("RIGHT", "D-right"),
+    ("L3", "L3"), ("R3", "R3"), ("-", "Minus"), ("+", "Plus"),
+]
+LABEL_OF = dict(LABELS)
+
+
+def read_config(path):
+    """Flat {key: value} for display, resolved through the include chain."""
+    cfg = J.Config(path)
+    values = {}
+    for key in [k for k, _ in LABELS] + [k for k, _l, _t, _c in
+                                         sum((g[1] for g in J.SETTING_GROUPS), [])]:
+        value, _origin = cfg.effective(key)
+        if value is not None:
+            values[key] = value
+    for key, value, _inherited in cfg.effective_bindings("+"):
+        values[key] = value
+    return values
+
+
+def pretty(value):
+    """Turn a JSM action into something readable at a glance."""
+    if not value:
+        return "-"
+    if value.startswith("hold:") or " + hold:" in value:
+        return value
+    value = value.strip().strip('"')
+    if value.endswith(".txt"):
+        return "layer: " + os.path.basename(value)[:-4]
+    parts = split_style(value)
+    if parts is not None and (parts[0] or parts[2]):
+        prefix, key, suffix = parts
+        shown = pretty(key)
+        if prefix:
+            shown = "%s %s" % (PREFIX_WORDS.get(prefix, prefix), shown)
+        if suffix:
+            shown = "%s (%s)" % (shown, SUFFIX_WORDS.get(suffix, suffix))
+        return shown
+    return {"LMOUSE": "fire", "RMOUSE": "alt fire", "MMOUSE": "middle click",
+            "SCROLLUP": "scroll up", "SCROLLDOWN": "scroll down",
+            "LSHIFT": "shift", "LCONTROL": "ctrl", "LALT": "alt",
+            "SPACE": "space", "ESC": "esc", "ENTER": "enter",
+            "CALIBRATE": "calibrate gyro", "NONE": "-"}.get(value, value.lower())
+
+
+def button_label(key):
+    """Readable name for anything bindable, physical button or stick
+    direction. The grid's own labels win, then the shared table."""
+    return LABEL_OF.get(key) or J.BUTTON_LABELS.get(key, key)
+
+
+def mode_label(mode):
+    return (mode or "").strip().lower().replace("_", " ") or "not set"
+
+
+STICK_MODE_SETTING = {"L": "LEFT_STICK_MODE", "R": "RIGHT_STICK_MODE"}
+STICK_SIDE_NAME = {"L": "Left stick", "R": "Right stick"}
+STICK_DIRECTIONS = (("Up", "UP"), ("Down", "DOWN"),
+                    ("Left", "LEFT"), ("Right", "RIGHT"))
+
+# (label, stick mode, what the four directions become). None leaves the
+# directions alone, because in a mouse mode JSM ignores them anyway and
+# wiping them would lose work for nothing.
+STICK_PRESETS = [
+    ("Mouse (aim)", "AIM", None),
+    ("Flick stick", "FLICK", None),
+    ("Mouse ring", "MOUSE_RING", None),
+    ("Scroll wheel", "SCROLL_WHEEL", None),
+    ("WASD", "NO_MOUSE", ("W", "S", "A", "D")),
+    ("Arrow keys", "NO_MOUSE", ("UP", "DOWN", "LEFT", "RIGHT")),
+    ("Buttons (keep bindings)", "NO_MOUSE", None),
+    ("Nothing", "NO_MOUSE", ("", "", "", "")),
+]
+
+
+# ---------------------------------------------------------------------------
+# JSM
+# ---------------------------------------------------------------------------
+
+class Jsm(object):
+    """The command channel and the log the launcher set up for us."""
+
+    LOADING = re.compile(r"Loading commands from file\s+(.*?)\s*$")
+
+    def __init__(self, fifo, log, on_layer):
+        self.fifo = fifo
+        self.log = log
+        self.on_layer = on_layer
+        self._stop = threading.Event()
+
+    def send(self, command):
+        try:
+            fd = os.open(self.fifo, os.O_WRONLY | os.O_NONBLOCK)
+        except OSError:
+            return False
+        try:
+            os.write(fd, (command + "\n").encode())
+            return True
+        except OSError:
+            return False
+        finally:
+            os.close(fd)
+
+    def watch(self):
+        thread = threading.Thread(target=self._tail, daemon=True)
+        thread.start()
+
+    def _tail(self):
+        """Follow JSM's stdout for config loads. Opened lazily and reopened if
+        it is replaced, so starting before JSM does is fine."""
+        handle = None
+        inode = None
+        while not self._stop.is_set():
+            try:
+                stat = os.stat(self.log)
+                if handle is None or stat.st_ino != inode:
+                    if handle:
+                        handle.close()
+                    handle = open(self.log, "r", errors="replace")
+                    handle.seek(0, os.SEEK_END)
+                    inode = stat.st_ino
+            except OSError:
+                time.sleep(1)
+                continue
+            line = handle.readline()
+            if not line:
+                time.sleep(0.3)
+                continue
+            clean = re.sub(r"\x1b\[[0-9;]*m", "", line).strip()
+            match = self.LOADING.search(clean)
+            if match:
+                GLib.idle_add(self.on_layer, match.group(1))
+
+
+# ---------------------------------------------------------------------------
+# windows
+# ---------------------------------------------------------------------------
+
+DESIGN_WIDTH = 1920.0            # the width every size below is written for
+
+
+def build_css(scale):
+    def pt(size):
+        return max(7, int(round(size * scale)))
+
+    def px(size):
+        return max(1, int(round(size * scale)))
+
+    return ("""
+#dim   { background-color: rgba(0, 0, 0, 0.78); }
+#toast {
+    background-color: rgba(18, 20, 26, 0.72);
+    border: %(b2)dpx solid rgba(120, 200, 255, 0.55);
+    border-radius: %(r14)dpx;
+    padding: %(p14)dpx %(p28)dpx;
+}
+#toasttitle { color: #7fd4ff; font-size: %(f22)dpt; font-weight: bold; }
+#toastsub   { color: #b9c2cc; font-size: %(f14)dpt; }
+#panel {
+    background-color: rgba(14, 16, 22, 0.97);
+    border: %(b3)dpx solid rgba(120, 200, 255, 0.9);
+    border-radius: %(r22)dpx;
+    padding: %(p34)dpx %(p56)dpx;
+}
+#title    { color: #7fd4ff; font-size: %(f34)dpt; font-weight: bold; }
+#sub      { color: #b9c2cc; font-size: %(f20)dpt; }
+#head     { color: #7fd4ff; font-size: %(f30)dpt; font-weight: bold; }
+#section  { color: #6d7885; font-size: %(f16)dpt; font-weight: bold; }
+#btn      { color: #7fd4ff; font-size: %(f21)dpt; font-weight: bold; }
+#btnsel   { color: #0d1016; font-size: %(f21)dpt; font-weight: bold; }
+#act      { color: #e6e6e6; font-size: %(f21)dpt; }
+#actsel   { color: #0d1016; font-size: %(f21)dpt; }
+#row      { color: #d8dee6; font-size: %(f26)dpt; padding: %(p8)dpx %(p20)dpx; }
+/* Same size, same weight, same padding as #row -- only the colours differ,
+   so nothing reflows when the cursor lands on a row. */
+#rowsel   { color: #0d1016; background-color: #7fd4ff; font-size: %(f26)dpt;
+            border-radius: %(r10)dpx; padding: %(p8)dpx %(p20)dpx; }
+#key      { color: #d8dee6; font-size: %(f17)dpt;
+            background-color: rgba(40, 46, 58, 0.95);
+            border: %(b2)dpx solid rgba(90, 100, 116, 0.9);
+            border-radius: %(r10)dpx; padding: %(p8)dpx %(p8)dpx; }
+/* The binding the button already has. Same metrics as #key -- only the
+   colours differ -- so marking it cannot reflow the keyboard. */
+#keycur   { color: #ffd479; font-size: %(f17)dpt;
+            background-color: rgba(40, 46, 58, 0.95);
+            border: %(b2)dpx solid #ffd479;
+            border-radius: %(r10)dpx; padding: %(p8)dpx %(p8)dpx; }
+#keysel   { color: #0d1016; font-size: %(f17)dpt;
+            background-color: #7fd4ff;
+            border: %(b2)dpx solid #7fd4ff;
+            border-radius: %(r10)dpx; padding: %(p8)dpx %(p8)dpx; }
+#cell     { padding: %(p8)dpx %(p20)dpx; }
+#cellsel  { background-color: #7fd4ff; border-radius: %(r10)dpx;
+            padding: %(p8)dpx %(p20)dpx; }
+#value    { color: #ffd479; font-size: %(f26)dpt; font-weight: bold; }
+#valuesel { color: #0d1016; font-size: %(f26)dpt; font-weight: bold; }
+#hint     { color: #8a94a0; font-size: %(f17)dpt; }
+#count    { color: #ffd479; font-size: %(f30)dpt; font-weight: bold; }
+""" % {
+        "f34": pt(34), "f30": pt(30), "f26": pt(26), "f22": pt(22),
+        "f21": pt(21), "f20": pt(20), "f17": pt(17), "f16": pt(16),
+        "f14": pt(14),
+        "b2": px(2), "b3": px(3), "r10": px(10), "r14": px(14), "r22": px(22),
+        "p8": px(8), "p14": px(14), "p20": px(20), "p28": px(28),
+        "p34": px(34), "p56": px(56),
+    }).encode()
+
+
+CSS = build_css(1.0)
+
+
+def _screen_area(win):
+    """Working area of the monitor the overlay is on. Gdk.Screen.get_width is
+    deprecated and reports the whole X screen, which is wrong on multi-head."""
+    display = Gdk.Display.get_default()
+    monitor = (display.get_monitor_at_window(win.get_window())
+               if win.get_window() else display.get_monitor(0))
+    return monitor.get_geometry()
+
+
+_css_scale = None
+_css_provider = None
+
+
+def ui_scale():
+    """How much to shrink the interface for the current screen.
+
+    A game that reduces the framebuffer reduces the X screen with it, and the
+    overlay has to come down to match or it simply will not fit.
+    """
+    try:
+        display = Gdk.Display.get_default()
+        width = display.get_monitor(0).get_geometry().width
+    except Exception:
+        return 1.0
+    if not width:
+        return 1.0
+    return max(0.35, min(1.6, width / DESIGN_WIDTH))
+
+
+def install_css(scale=None):
+    """(Re)register the stylesheet for the current screen size.
+
+    Without a provider the widget names are set but nothing is styled, and the
+    panel renders as bare text over the game with no card behind it. The scale
+    is rechecked on every window build because a game can change the screen
+    resolution while the HUD is already running.
+    """
+    global _css_scale, _css_provider
+    scale = ui_scale() if scale is None else scale
+    if _css_scale is not None and abs(scale - _css_scale) < 0.01:
+        return
+    screen = Gdk.Screen.get_default()
+    if _css_provider is not None:
+        Gtk.StyleContext.remove_provider_for_screen(screen, _css_provider)
+    _css_provider = Gtk.CssProvider()
+    _css_provider.load_from_data(build_css(scale))
+    Gtk.StyleContext.add_provider_for_screen(
+        screen, _css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+    _css_scale = scale
+
+
+def _overlay_window(name):
+    # Rechecked every time: a game can change the screen resolution while the
+    # HUD is already running, and rom2 does exactly that.
+    install_css()
+    win = Gtk.Window(type=Gtk.WindowType.POPUP)
+    win.set_app_paintable(True)
+    win.set_decorated(False)
+    win.set_keep_above(True)
+    win.set_accept_focus(False)      # never take focus away from the game
+    win.set_focus_on_map(False)
+    win.set_type_hint(Gdk.WindowTypeHint.NOTIFICATION)
+    screen = win.get_screen()
+    visual = screen.get_rgba_visual()
+    if visual:
+        win.set_visual(visual)
+    return win
+
+
+class Toast(object):
+    """Brief message near the top of the screen."""
+
+    def __init__(self):
+        self.win = None
+        self.timer = None
+
+    def show(self, title, subtitle="", seconds=3.0):
+        self.hide()
+        self.win = _overlay_window("toast")
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        box.set_name("toast")
+        for pad in ("top", "bottom"):
+            getattr(box, "set_margin_" + pad)(14)
+        box.set_margin_start(26)
+        box.set_margin_end(26)
+        label = Gtk.Label(label=title)
+        label.set_name("toasttitle")
+        box.pack_start(label, True, True, 0)
+        if subtitle:
+            sub = Gtk.Label(label=subtitle)
+            sub.set_name("toastsub")
+            box.pack_start(sub, True, True, 0)
+        self.win.add(box)
+        self.win.show_all()
+        width, height = self.win.get_size()
+        area = _screen_area(self.win)
+        # Bottom right: out of the way of anything the player is aiming at,
+        # and clear of the d-pad/ammo readouts most of these games put bottom
+        # left. TOAST_MARGIN keeps it off a TV's overscan edge.
+        self.win.move(area.x + area.width - width - TOAST_MARGIN,
+                      area.y + area.height - height - TOAST_MARGIN)
+        self.timer = GLib.timeout_add(int(seconds * 1000), self._expire)
+
+    def _expire(self):
+        self.hide()
+        return False
+
+    def hide(self):
+        if self.timer:
+            GLib.source_remove(self.timer)
+            self.timer = None
+        if self.win:
+            self.win.destroy()
+            self.win = None
+
+
+# Each row is (label, JSM name, width in units); a bare number is a gap.
+# Widths follow a real keyboard so the shape is recognisable at a glance.
+KEY_ROWS = [
+    [("Esc", "ESC", 4), 2,
+     ("F1", "F1", 4), ("F2", "F2", 4), ("F3", "F3", 4), ("F4", "F4", 4), 2,
+     ("F5", "F5", 4), ("F6", "F6", 4), ("F7", "F7", 4), ("F8", "F8", 4), 2,
+     ("F9", "F9", 4), ("F10", "F10", 4), ("F11", "F11", 4), ("F12", "F12", 4)],
+
+    [("`", "`", 4), ("1", "1", 4), ("2", "2", 4), ("3", "3", 4),
+     ("4", "4", 4), ("5", "5", 4), ("6", "6", 4), ("7", "7", 4),
+     ("8", "8", 4), ("9", "9", 4), ("0", "0", 4), ("-", "-", 4),
+     ("=", "+", 4), ("Bksp", "BACKSPACE", 8)],
+
+    [("Tab", "TAB", 6), ("Q", "Q", 4), ("W", "W", 4), ("E", "E", 4),
+     ("R", "R", 4), ("T", "T", 4), ("Y", "Y", 4), ("U", "U", 4),
+     ("I", "I", 4), ("O", "O", 4), ("P", "P", 4), ("[", "[", 4),
+     ("]", "]", 4), ("\\", "\\", 6)],
+
+    [8, ("A", "A", 4), ("S", "S", 4), ("D", "D", 4), ("F", "F", 4),
+     ("G", "G", 4), ("H", "H", 4), ("J", "J", 4), ("K", "K", 4),
+     ("L", "L", 4), (";", ";", 4), ("'", "'", 4), ("Enter", "ENTER", 10)],
+
+    [("Shift", "LSHIFT", 10), ("Z", "Z", 4), ("X", "X", 4), ("C", "C", 4),
+     ("V", "V", 4), ("B", "B", 4), ("N", "N", 4), ("M", "M", 4),
+     (",", ",", 4), (".", ".", 4), ("/", "/", 4),
+     ("Shift", "RSHIFT", 10)],
+
+    [("Ctrl", "LCONTROL", 6), ("Win", "LWINDOWS", 5), ("Alt", "LALT", 5),
+     ("Space", "SPACE", 24), ("Alt", "RALT", 5), ("Ctrl", "RCONTROL", 6),
+     3, ("Up", "UP", 5)],
+
+    [("Ins", "INSERT", 6), ("Del", "DELETE", 6), ("Home", "HOME", 7),
+     ("End", "END", 6), ("PgUp", "PAGEUP", 7), ("PgDn", "PAGEDOWN", 7),
+     3, ("Left", "LEFT", 5), ("Down", "DOWN", 5), ("Right", "RIGHT", 5)]
+]
+
+KEY_UNITS = sum(w if isinstance(w, int) else w[2] for w in KEY_ROWS[1])
+
+# Everything that is not a key on a keyboard. These get uniform tiles under a
+# heading rather than keyboard-style widths: there is no physical layout to
+# imitate, and pretending there was left the bottom of the picker looking like
+# a pile of mismatched boxes.
+# (label, action-modifier prefix, event-modifier suffix). Order matters: the
+# first is the default, which is what a binding with no modifiers is.
+PRESS_STYLES = [
+    ("Hold", "", ""),           # down for as long as you hold the button
+    ("Toggle", "^", ""),        # press once on, press again off
+    ("Turbo", "", "+"),         # repeats while held
+    ("On tap", "", "'"),        # only on a quick tap
+    ("On hold", "", "_"),       # only once held long enough
+]
+
+ACTION_PREFIXES = "!^"
+EVENT_SUFFIXES = "\\/+'_"
+PREFIX_WORDS = {"^": "toggle", "!": "instant"}
+SUFFIX_WORDS = {"+": "turbo", "'": "tap", "_": "hold",
+                "\\": "on press", "/": "on release"}
+
+
+def split_style(value):
+    """(prefix, key, suffix) for a binding that is a single key.
+
+    None when a press style cannot be applied blindly: nothing bound, a quoted
+    console command, a layer file, or a tap/hold pair like `SPACE TAB` -- all
+    of which would be mangled by pasting a modifier onto them.
+    """
+    value = (value or "").strip()
+    if not value or value.startswith('"') or value.endswith(".txt"):
+        return None
+    if " " in value:
+        return None                  # a tap-and-hold pair, not one action
+    prefix = ""
+    # Only strip when something is left over: `+` and `/` are themselves keys.
+    if len(value) > 1 and value[0] in ACTION_PREFIXES:
+        prefix, value = value[0], value[1:]
+    suffix = ""
+    if len(value) > 1 and value[-1] in EVENT_SUFFIXES:
+        suffix, value = value[-1], value[:-1]
+    return (prefix, value, suffix) if value else None
+
+
+def style_index(value):
+    """Which PRESS_STYLES entry a binding is written in, if any."""
+    parts = split_style(value)
+    if parts is None:
+        return None
+    prefix, _key, suffix = parts
+    for i, (_label, want_prefix, want_suffix) in enumerate(PRESS_STYLES):
+        if (prefix, suffix) == (want_prefix, want_suffix):
+            return i
+    return None
+
+
+TILE_UNITS = 12
+TILES_PER_ROW = 5
+
+ACTION_SECTIONS = [
+    ("MOUSE", [
+        ("Left click", "LMOUSE"), ("Right click", "RMOUSE"),
+        ("Wheel click", "MMOUSE"), ("Scroll up", "SCROLLUP"),
+        ("Scroll down", "SCROLLDOWN"), ("Back", "BMOUSE"),
+        ("Forward", "FMOUSE"),
+    ]),
+    # Every gyro action JoyShockMapper accepts. "Gyro off" is the one most
+    # configs use -- gyro is on by default and that button silences it while
+    # held -- but the inversions and trackball modes are bindable too.
+    ("GYRO", [
+        ("Gyro off", "GYRO_OFF"), ("Gyro on", "GYRO_ON"),
+        ("Calibrate", "CALIBRATE"), ("Invert", "GYRO_INVERT"),
+        ("Invert X", "GYRO_INV_X"), ("Invert Y", "GYRO_INV_Y"),
+        ("Track X", "GYRO_TRACK_X"), ("Track Y", "GYRO_TRACK_Y"),
+        ("Trackball", "GYRO_TRACKBALL"),
+    ]),
+    ("NO BINDING", [("Nothing", "NONE"), ("Clear binding", "")]),
+    # These do not replace the binding, they change how it fires -- the picker
+    # spots the marker and wires them to set_press_style instead.
+    ("PRESS STYLE", [(label, "@STYLE:%d" % i)
+                     for i, (label, _p, _s) in enumerate(PRESS_STYLES)]),
+]
+
+STYLE_MARKER = "@STYLE:"
+
+
+def _build_key_layout():
+    """The keyboard rows, then the tiled sections, plus which rows carry a
+    heading. Headings are kept out of the row list itself so navigation never
+    has to step over something unselectable."""
+    rows = [list(row) for row in KEY_ROWS]
+    headings = {}
+    for name, items in ACTION_SECTIONS:
+        for first in range(0, len(items), TILES_PER_ROW):
+            chunk = items[first:first + TILES_PER_ROW]
+            pad = (KEY_UNITS - len(chunk) * TILE_UNITS) // 2
+            row = [pad] if pad > 0 else []
+            row += [(label, action, TILE_UNITS) for label, action in chunk]
+            if first == 0:
+                headings[len(rows)] = name
+            rows.append(row)
+    return rows, headings
+
+
+KEY_LAYOUT, KEY_HEADINGS = _build_key_layout()
+
+TOAST_MARGIN = 64   # gap from the screen edge, clear of TV overscan
+
+CALIB_LEAD = 3      # seconds to put the controller down
+CALIB_RUN = 10      # seconds of collection
+
+GYRO_STEPS = [0.5, 1, 1.5, 2, 3, 4, 6, 8, 12, 16]
+STICK_STEPS = [120, 180, 240, 300, 360, 480, 720]
+
+
+class Row(object):
+    """One selectable line. `value` is shown on the right; `go` is what
+    activating it does."""
+
+    def __init__(self, label, value="", go=None, adjust=None, dim=False):
+        self.label = label
+        self.value = value
+        self.go = go
+        self.adjust = adjust
+        self.dim = dim
+
+
+class Panel(object):
+    """The overlay. A stack of screens sharing one renderer, so every screen
+    looks the same and is navigated the same way -- which matters when the
+    only input device is a controller.
+
+    Everything it reads and writes goes through jsmconfig, the same library
+    the Kodi editor uses, so a change made here is a change made there.
+    """
+
+    def __init__(self, jsm, config_path, on_close):
+        self.jsm = jsm
+        self.config_path = config_path
+        self.on_close = on_close
+        self.win = None
+        self.stack = []              # [(title, rows, selected)]
+        self.gyro = None
+        self.stick = None
+        self.message = ""
+        self.message_style = "sub"
+        self._message_label = None
+        self.busy = None             # "lead" or "run" during calibration
+        self._last_grid = None
+        self._widgets = {}
+        self._picker_key = None
+        self._calib_left = 0
+
+    # -- lifecycle ---------------------------------------------------------
+    @property
+    def visible(self):
+        return self.win is not None
+
+    def toggle(self):
+        self.close() if self.visible else self.open()
+
+    def open(self):
+        cfg = J.Config(self.config_path)
+        self.gyro = _as_float(cfg.effective("GYRO_SENS")[0], 2.0)
+        self.stick = _as_float(cfg.effective("STICK_SENS")[0], 240.0)
+        # Stop the game seeing input while the overlay is up.
+        self.jsm.send("RESET_MAPPINGS")
+        self.stack = []
+        self.message = ""
+        self.push(self.main_screen())
+        self._build_window()
+
+    def close(self):
+        if not self.visible:
+            return
+        self.cancel_calibration()
+        self.win.destroy()
+        self.win = None
+        self._message_label = None
+        # Put the bindings back, then re-apply the live values, which reloading
+        # the file would otherwise revert.
+        self.jsm.send(self.config_path)
+        self.jsm.send("GYRO_SENS = %s" % _num(self.gyro))
+        self.jsm.send("STICK_SENS = %s" % _num(self.stick))
+        self.on_close()
+
+    # -- screen stack ------------------------------------------------------
+    def push(self, screen):
+        """Open a screen with the selection already on something selectable.
+
+        navigate() corrected this, but only on the first d-pad press -- so a
+        screen whose first row is a heading opened with the heading
+        highlighted, which reads as the cursor being on an inert row.
+        """
+        screen = list(screen) + [0] if len(screen) == 2 else list(screen)
+        rows = screen[1]
+        if screen[2] < len(rows) and rows[screen[2]].dim:
+            for i, row in enumerate(rows):
+                if not row.dim:
+                    screen[2] = i
+                    break
+        self.stack.append(screen)
+
+    def pop(self):
+        if len(self.stack) > 1:
+            self.stack.pop()
+            self.refresh()
+        else:
+            self.close()
+
+    @property
+    def current(self):
+        return self.stack[-1]
+
+    def refresh(self, rebuild=True):
+        """Re-derive the top screen from the file, so edits show immediately."""
+        title = self.current[0]
+        builder = self.current[3] if len(self.current) > 3 else None
+        if builder:
+            self.current[1] = builder()
+            rows = self.current[1]
+            if rows and self.current[2] < len(rows) and rows[self.current[2]].dim:
+                for i, row in enumerate(rows):
+                    if not row.dim:
+                        self.current[2] = i
+                        break
+        if rebuild and self.visible:
+            self._build_window()
+
+    # -- screens -----------------------------------------------------------
+    GRID_ROWS = 6                    # cells per column before wrapping
+
+    @property
+    def grid_rows(self):
+        """Shorten the columns on a short screen so the list below still fits."""
+        try:
+            height = Gdk.Display.get_default().get_monitor(0).get_geometry().height
+        except Exception:
+            return self.GRID_ROWS
+        return self.GRID_ROWS if height >= 900 else 8
+
+    def main_screen(self):
+        """The bindings themselves, plus a short list of everything else."""
+        def rows():
+            values = read_config(self.config_path)
+            cfg = J.Config(self.config_path)
+            notes = {}
+            for setting, note in (("GYRO_OFF", "gyro off"),
+                                  ("GYRO_ON", "gyro on")):
+                button = (cfg.effective(setting)[0] or "").strip()
+                if button:
+                    notes[button] = note
+
+            grid = []
+            for key, label in LABELS:
+                value = values.get(key)
+                text = pretty(value) if value else "-"
+                if key in notes:
+                    text = ("%s + %s" % (text, notes[key])
+                            if value else "hold: " + notes[key])
+                grid.append(Row(label, text, lambda k=key: self.rebind(k)))
+
+            rest = [
+                Row("Gyro sensitivity", "\u25c0  %s  \u25b6" % _num(self.gyro),
+                    adjust=self.adjust_gyro),
+                Row("Stick speed", "\u25c0  %s  \u25b6" % _num(self.stick),
+                    adjust=self.adjust_stick),
+                Row("Recalibrate gyro", "%ds down, %ds still"
+                    % (CALIB_LEAD, CALIB_RUN), self.calibrate),
+                Row("Save gyro and stick to the file", "", self.save_tuning),
+                Row("Sticks", "%s  /  %s"
+                    % (mode_label(cfg.effective("LEFT_STICK_MODE")[0]),
+                       mode_label(cfg.effective("RIGHT_STICK_MODE")[0])),
+                    self.sticks_screen),
+                Row("Layers", "hold and toggle layers", self.layers_screen),
+                Row("Config file", os.path.basename(self.config_path),
+                    self.config_screen),
+                Row("Close", "", self.close),
+            ]
+            return grid + rest
+        built = rows()
+        return [os.path.basename(self.config_path)[:-4].upper(), built, 0, rows,
+                len([1 for k, _l in LABELS])]
+
+    def action_screen(self, button):
+        """Pick what one button does."""
+        def rows():
+            cfg = J.Config(self.config_path)
+            current = cfg.effective(button)[0]
+            out = [Row("Currently", pretty(current) if current else "not set",
+                       dim=True)]
+            preferred = ("Mouse", "Gyro actions", "Nothing")
+            groups = ([g for g in J.ACTION_GROUPS if g[0] in preferred]
+                      + [g for g in J.ACTION_GROUPS if g[0] not in preferred])
+            for name, values in groups:
+                out.append(Row(name, ", ".join(values[:5]) + " ...",
+                               lambda n=name, v=values:
+                               self.value_screen(button, n, v)))
+            # Last, deliberately: this used to be the first selectable row, so
+            # opening the picker and pressing A wiped the binding by accident.
+            out.append(Row("Clear this binding", "",
+                           lambda: self.set_binding(button, "")))
+            return out
+        self.push(["%s  \u2192" % LABEL_OF.get(button, button), rows(), 0, rows])
+        self.refresh()
+
+    def value_screen(self, button, group, values):
+        def rows():
+            return [Row(v, "", lambda vv=v: self.set_binding(button, vv))
+                    for v in values]
+        self.push([group.upper(), rows(), 0, rows])
+        self.refresh()
+
+    def sticks_screen(self):
+        """Both sticks: what each one is, and what its directions do."""
+        def rows():
+            cfg = J.Config(self.config_path)
+            out = []
+            for side in ("L", "R"):
+                mode = (cfg.effective(STICK_MODE_SETTING[side])[0] or "").strip()
+                out.append(Row(STICK_SIDE_NAME[side].upper(), "", dim=True))
+                out.append(Row("Mode", "\u25c0  %s  \u25b6" % mode_label(mode),
+                               adjust=lambda d, x=side:
+                               self.adjust_stick_mode(x, d)))
+                out.append(Row("Set the whole stick to", "presets",
+                               lambda x=side: self.stick_preset_screen(x)))
+                # Directions only do anything in NO_MOUSE; say so rather than
+                # letting someone bind four keys that will never fire.
+                aside = ("" if mode.upper() == "NO_MOUSE"
+                         else "   (unused in %s)" % mode_label(mode))
+                for name, suffix in STICK_DIRECTIONS:
+                    key = side + suffix
+                    value = (cfg.effective(key)[0] or "").strip()
+                    out.append(Row("    " + name,
+                                   (pretty(value) if value else "-") + aside,
+                                   lambda k=key: self.rebind(k)))
+            return out
+        self.push(["STICKS", rows(), 0, rows])
+        self.refresh()
+
+    def stick_preset_screen(self, side):
+        """Set a whole stick in one press."""
+        def rows():
+            return [Row(label, mode_label(mode),
+                        lambda m=mode, d=dirs: self.apply_stick_preset(side, m, d))
+                    for label, mode, dirs in STICK_PRESETS]
+        self.push([STICK_SIDE_NAME[side].upper(), rows(), 0, rows])
+        self.refresh()
+
+    def apply_stick_preset(self, side, mode, dirs):
+        setting = STICK_MODE_SETTING[side]
+        cfg = J.Config(self.config_path)
+        cfg.set(setting, mode)
+        if dirs is not None:
+            for (_name, suffix), value in zip(STICK_DIRECTIONS, dirs):
+                key = side + suffix
+                cfg.clear(key) if value == "" else cfg.set(key, value)
+        cfg.save()
+        self.jsm.send("%s = %s" % (setting, mode))
+        if dirs is not None:
+            for (_name, suffix), value in zip(STICK_DIRECTIONS, dirs):
+                self.jsm.send("%s%s = %s" % (side, suffix, value or "NONE"))
+        self.message = "%s: %s" % (STICK_SIDE_NAME[side], mode_label(mode))
+        self.pop()                   # back to the sticks screen, showing it
+        self.refresh()
+
+    def adjust_stick_mode(self, side, direction):
+        """Step through the stick modes on the row itself, like the gyro and
+        stick speed rows do."""
+        setting = STICK_MODE_SETTING[side]
+        modes = J.STICK_MODES
+        now = (J.Config(self.config_path).effective(setting)[0] or "").strip().upper()
+        at = modes.index(now) if now in modes else 0
+        self.set_stick_mode(side, modes[(at + direction) % len(modes)])
+
+    def set_stick_mode(self, side, mode):
+        setting = STICK_MODE_SETTING[side]
+        cfg = J.Config(self.config_path)
+        cfg.set(setting, mode)
+        cfg.save()
+        self.jsm.send("%s = %s" % (setting, mode))
+        self.message = "%s: %s" % (STICK_SIDE_NAME[side], mode_label(mode))
+        self.refresh()
+
+    def layers_screen(self):
+        def rows():
+            cfg = J.Config(self.config_path)
+            out = []
+            held = cfg.chord_buttons()
+            for button in held:
+                count = len([k for k, _v in cfg.all_bindings(",")
+                             if J.split_combo(k)[0] == button])
+                out.append(Row("While %s is held" % LABEL_OF.get(button, button),
+                               "%d binding%s" % (count, "" if count == 1 else "s"),
+                               lambda b=button: self.layer_screen(b)))
+            if not held:
+                out.append(Row("No hold layers", "", dim=True))
+            target = cfg.own("-++")
+            out.append(Row("Desktop layer",
+                           os.path.basename(target.strip('"'))
+                           if target else "off",
+                           self.desktop_layer_screen))
+            return out
+        self.push(["LAYERS", rows(), 0, rows])
+        self.refresh()
+
+    def layer_screen(self, held):
+        def rows():
+            cfg = J.Config(self.config_path)
+            out = []
+            for key, label in LABELS:
+                if key == held:
+                    continue
+                chord = "%s,%s" % (held, key)
+                own = cfg.own(chord)
+                if own:
+                    shown = pretty(own)
+                else:
+                    plain = cfg.effective(key)[0]
+                    shown = "unchanged: %s" % pretty(plain) if plain else "-"
+                out.append(Row(label, shown,
+                               lambda c=chord: self.rebind(c)))
+            return out
+        self.push(["WHILE %s HELD" % LABEL_OF.get(held, held).upper(),
+                   rows(), 0, rows])
+        self.refresh()
+
+    def desktop_layer_screen(self):
+        def rows():
+            cfg = J.Config(self.config_path)
+            target = (cfg.own("-++") or "").strip('"')
+            out = [Row("Entered with", "Minus + Plus together", dim=True)]
+            if target:
+                out.append(Row("Currently", os.path.basename(target), dim=True))
+                out.append(Row("Turn off", "", self.desktop_off))
+            else:
+                out.append(Row("Turn on", "from the template", self.desktop_on))
+            return out
+        self.push(["DESKTOP LAYER", rows(), 0, rows])
+        self.refresh()
+
+    def tuning_screen(self):
+        def rows():
+            return [
+                Row("Gyro sensitivity", "\u25c0  %s  \u25b6" % _num(self.gyro),
+                    adjust=self.adjust_gyro),
+                Row("Stick speed", "\u25c0  %s  \u25b6" % _num(self.stick),
+                    adjust=self.adjust_stick),
+                Row("Recalibrate gyro", "%ds to set it down, %ds still"
+                    % (CALIB_LEAD, CALIB_RUN),
+                    self.calibrate),
+                Row("Save these to the config file", "", self.save_tuning),
+            ]
+        self.push(["GYRO AND STICKS", rows(), 0, rows])
+        self.refresh()
+
+    def config_screen(self):
+        def rows():
+            out = [Row("In use", os.path.basename(self.config_path), dim=True),
+                   Row("Make a copy and use it", "leaves the original alone",
+                       self.duplicate_config)]
+            for path in J.list_configs():
+                if os.path.abspath(path) == os.path.abspath(self.config_path):
+                    continue
+                out.append(Row(os.path.basename(path),
+                               os.path.basename(os.path.dirname(path)),
+                               lambda p=path: self.switch_config(p)))
+            return out
+        self.push(["CONFIG FILE", rows(), 0, rows])
+        self.refresh()
+
+    def set_message(self, text, style="sub"):
+        """Update the status line without rebuilding the screen."""
+        self.message = text
+        self.message_style = style
+        if self._message_label is not None:
+            self._message_label.set_text(text)
+            self._message_label.set_name(style)
+        elif self.visible:
+            self.refresh()
+
+    # -- actions -----------------------------------------------------------
+    def set_binding(self, key, value):
+        cfg = J.Config(self.config_path)
+        cfg.clear(key) if value == "" else cfg.set(key, value)
+        cfg.save()
+        self.message = "%s %s" % (button_label(key),
+                                  "cleared" if value == ""
+                                  else "= " + pretty(value))
+        # Stay where we are: on the main grid the row updates in place, and
+        # inside a hold layer the layer's own list is what should be redrawn.
+        # The picker has to be rebuilt rather than refreshed, or it keeps
+        # showing the binding as it was before this edit.
+        if not self._repaint_picker():
+            self.refresh()
+
+    def _picker_screen(self, key):
+        """The drawn keyboard, mouse, gyro and press styles for one button."""
+        current = J.Config(self.config_path).effective(key)[0] or ""
+        current = current.strip().strip('"')
+        parts = split_style(current)
+        bare = parts[1] if parts else current
+        chosen_style = style_index(current)
+        rows, keymap, marked = [], [], set()
+        for line in KEY_LAYOUT:
+            row = []
+            for item in line:
+                if isinstance(item, int):
+                    row.append((None, item))       # a gap
+                    continue
+                label, action, width = item
+                index = len(rows)
+                if action.startswith(STYLE_MARKER):
+                    which = int(action[len(STYLE_MARKER):])
+                    if which == chosen_style:
+                        marked.add(index)
+                    rows.append(Row(label, "", lambda w=which, k=key:
+                                    self.set_press_style(k, w)))
+                else:
+                    # Match the key itself, so a binding written as `^LSHIFT`
+                    # still opens on Shift rather than on nothing.
+                    if action and action == bare:
+                        marked.add(index)
+                    rows.append(Row(label, "", lambda a=action, k=key:
+                                    self.set_binding(k, a)))
+                row.append((index, width))
+            keymap.append(row)
+        title = "%s   \u2192   now: %s" % (button_label(key),
+                                           pretty(current) if current
+                                           else "not set")
+        # Open on the key it is already bound to, so a small change is one
+        # press away and the current value is visible without hunting.
+        start = min(marked) if marked else 0
+        return [title, rows, start, None, 0, keymap, marked]
+
+    def rebind(self, key):
+        """Pick what a button does from a drawn keyboard, mouse and gyro."""
+        self._picker_key = key
+        self.push(self._picker_screen(key))
+        self._build_window()
+
+    def _repaint_picker(self):
+        """Redraw the picker in place after it edits its own binding, so the
+        title and the marks are never stale. The screen has no builder --
+        every row's action is bound to a specific key -- so it is rebuilt
+        wholesale rather than refreshed."""
+        if self._keymap() is None or not self._picker_key:
+            return False
+        self.stack[-1] = self._picker_screen(self._picker_key)
+        self._build_window()
+        return True
+
+    def set_press_style(self, key, which):
+        """Rewrite the binding to fire a different way, keeping the key."""
+        label, prefix, suffix = PRESS_STYLES[which]
+        current = J.Config(self.config_path).effective(key)[0] or ""
+        parts = split_style(current)
+        if parts is None:
+            self.message = ("Bind a key first" if not current.strip()
+                            else "%s: a press style needs a single key"
+                            % button_label(key))
+            self.message_style = "hint"
+            if not self._repaint_picker():
+                self.refresh()
+            return
+        self.set_binding(key, prefix + parts[1] + suffix)
+
+    def adjust_gyro(self, direction):
+        self.gyro = _step(GYRO_STEPS, self.gyro, direction)
+        self.jsm.send("GYRO_SENS = %s" % _num(self.gyro))
+        self.refresh()
+
+    def adjust_stick(self, direction):
+        self.stick = _step(STICK_STEPS, self.stick, direction)
+        self.jsm.send("STICK_SENS = %s" % _num(self.stick))
+        self.refresh()
+
+    def calibrate(self):
+        """Two countdowns: time to set the pad down, then the collection run.
+
+        JSM averages the gyro while calibration is running and treats that as
+        "not moving", so the controller has to be still for the whole of the
+        second phase -- which means the player needs to know when it starts
+        and when it is safe to pick the pad up again.
+        """
+        if self.busy:
+            return
+        self.busy = "lead"
+        self._calib_left = CALIB_LEAD
+        self.set_message("Put the controller down flat --  %d"
+                         % self._calib_left, "count")
+        GLib.timeout_add_seconds(1, self._calib_tick)
+
+    def _calib_tick(self):
+        if not self.busy:
+            return False                       # cancelled
+        self._calib_left -= 1
+        if self.busy == "lead":
+            if self._calib_left > 0:
+                self.set_message("Put the controller down flat --  %d"
+                                 % self._calib_left, "count")
+                return True
+            self.busy = "run"
+            self._calib_left = CALIB_RUN
+            self.jsm.send("RESTART_GYRO_CALIBRATION")
+            self.set_message("Calibrating, keep it still --  %d"
+                             % self._calib_left, "count")
+            return True
+        if self._calib_left > 0:
+            self.set_message("Calibrating, keep it still --  %d"
+                             % self._calib_left, "count")
+            return True
+        self.jsm.send("FINISH_GYRO_CALIBRATION")
+        self.busy = None
+        self.set_message("Gyro calibrated")
+        return False
+
+    def cancel_calibration(self):
+        """Never leave JSM collecting: if the run phase started, close it."""
+        if self.busy == "run":
+            self.jsm.send("FINISH_GYRO_CALIBRATION")
+        was = self.busy
+        self.busy = None
+        if was:
+            self.set_message("calibration cancelled")
+
+    def save_tuning(self):
+        cfg = J.Config(self.config_path)
+        cfg.set("GYRO_SENS", _num(self.gyro))
+        cfg.set("STICK_SENS", _num(self.stick))
+        cfg.save()
+        self.message = "saved to %s" % os.path.basename(self.config_path)
+        self.refresh()
+
+    def duplicate_config(self):
+        base, ext = os.path.splitext(self.config_path)
+        for n in range(2, 100):
+            new = "%s-%d%s" % (base, n, ext)
+            if not os.path.exists(new):
+                break
+        else:
+            self.message = "too many copies"
+            self.refresh()
+            return
+        shutil.copy2(self.config_path, new)
+        self.switch_config(new, copied=True)
+
+    def switch_config(self, path, copied=False):
+        """Point this game at another config, in the file Kodi reads too."""
+        self.config_path = path
+        data = J.load_config() if hasattr(J, "load_config") else None
+        games = J.load_games()
+        changed = False
+        if games:
+            for game in games.get("games", []):
+                if game.get("jsm") and os.path.basename(game["jsm"]) == \
+                        os.path.basename(self._original_name()):
+                    game["jsm"] = path
+                    changed = True
+            if changed:
+                J.save_games(games)
+        self.jsm.send(path)
+        self.message = ("copied to %s" if copied else "now using %s") \
+            % os.path.basename(path)
+        while len(self.stack) > 1:
+            self.stack.pop()
+        self.stack[-1][1] = self.stack[-1][3]()
+        self.refresh()
+
+    def _original_name(self):
+        return getattr(self, "_orig", None) or self.config_path
+
+    def desktop_on(self):
+        template = os.path.expanduser(
+            "~/.config/JoyShockMapper/layers/_desktop_template.txt")
+        if not os.path.exists(template):
+            self.message = "no layer template installed"
+            self.refresh()
+            return
+        name = os.path.splitext(os.path.basename(self.config_path))[0] + \
+            "_desktop.txt"
+        dest = os.path.expanduser("~/.config/JoyShockMapper/layers/" + name)
+        back = os.path.relpath(self.config_path,
+                               os.path.expanduser("~/.config/JoyShockMapper"))
+        io_open = open
+        with io_open(template) as fh:
+            body = fh.read()
+        with io_open(dest, "w") as fh:
+            fh.write(body.replace("@RETURN@", back))
+        cfg = J.Config(self.config_path)
+        cfg.set("-++", '"layers/%s"' % name)
+        cfg.save()
+        self.message = "desktop layer on"
+        self.refresh()
+
+    def desktop_off(self):
+        cfg = J.Config(self.config_path)
+        cfg.clear("-++")
+        cfg.save()
+        self.message = "desktop layer off"
+        self.refresh()
+
+    # -- rendering ---------------------------------------------------------
+    def _build_window(self):
+        if self.win:
+            self.win.destroy()
+        self.win = _overlay_window("panel")
+        area = _screen_area(self.win)
+        self.win.set_default_size(area.width, area.height)
+
+        dim = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        dim.set_name("dim")
+        holder = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        holder.set_halign(Gtk.Align.CENTER)
+        holder.set_valign(Gtk.Align.CENTER)
+        holder.pack_start(self._card(), False, False, 0)
+        dim.pack_start(holder, True, True, 0)
+        self.win.add(dim)
+        self.win.show_all()
+        self.win.resize(area.width, area.height)
+        self.win.move(area.x, area.y)
+
+    def _px(self, value):
+        """A pixel size from the 1920-wide design, for the current screen."""
+        return max(1, int(round(value * ui_scale())))
+
+    def _keymap(self):
+        """Row/width layout when the current screen is the key picker."""
+        return self.current[5] if len(self.current) > 5 else None
+
+    def _marked(self):
+        """Indices the picker shows as current: the bound key, and the press
+        style it is written in. A set, because both are marked at once."""
+        return self.current[6] if len(self.current) > 6 else set()
+
+    def _grid_count(self):
+        """How many of the current screen's rows are laid out as a grid."""
+        return self.current[4] if len(self.current) > 4 else 0
+
+    def _card(self):
+        title, rows, selected = self.current[0], self.current[1], self.current[2]
+        self._widgets = {}
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=self._px(12))
+        outer.set_name("panel")
+
+        head = Gtk.Label(label=title)
+        head.set_name("head")
+        outer.pack_start(head, False, False, 0)
+
+        if self.message:
+            self._message_label = Gtk.Label(label=self.message)
+            self._message_label.set_name(self.message_style)
+            outer.pack_start(self._message_label, False, False, 0)
+        else:
+            self._message_label = Gtk.Label(label="")
+            self._message_label.set_name(self.message_style)
+            outer.pack_start(self._message_label, False, False, 0)
+
+        keymap = self._keymap()
+        if keymap:
+            unit = max(2, int(round(self._px(1920) / (KEY_UNITS * 4.2))))
+            board = Gtk.Grid(column_spacing=self._px(3),
+                             row_spacing=self._px(5))
+            board.set_halign(Gtk.Align.CENTER)
+            marked = self._marked()
+            out = 0                       # grid row, ahead of r by the headings
+            for r, line in enumerate(keymap):
+                heading = KEY_HEADINGS.get(r)
+                if heading:
+                    mark = Gtk.Label(label=heading, xalign=0)
+                    mark.set_name("section")
+                    board.attach(mark, 0, out, KEY_UNITS, 1)
+                    out += 1
+                col = 0
+                for index, width in line:
+                    if index is None:
+                        col += width          # a gap
+                        continue
+                    key = Gtk.Label(label=rows[index].label)
+                    key.set_size_request(unit * width, -1)
+                    # The key already bound stays marked when the cursor moves
+                    # off it, so "what is this now" stays answerable.
+                    normal = "keycur" if index in marked else "key"
+                    self._register(index, [(key, normal, "keysel")],
+                                   index == selected)
+                    board.attach(key, col, out, width, 1)
+                    col += width
+                out += 1
+            outer.pack_start(board, False, False, self._px(6))
+            hint = Gtk.Label(label="D-pad  move        A  choose        B  back")
+            hint.set_name("hint")
+            outer.pack_start(hint, False, False, self._px(8))
+            return outer
+
+        grid_count = self._grid_count()
+        if grid_count:
+            grid = Gtk.Grid(column_spacing=self._px(44), row_spacing=self._px(6))
+            grid.set_halign(Gtk.Align.CENTER)
+            for i in range(grid_count):
+                col, row = divmod(i, self.grid_rows)
+                grid.attach(self._cell(rows[i], i == selected, i),
+                            col, row, 1, 1)
+            outer.pack_start(grid, False, False, 6)
+            outer.pack_start(Gtk.Separator(), False, False, 6)
+
+        listbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        listbox.set_halign(Gtk.Align.CENTER)
+        rest = rows[grid_count:]
+        visible = 11 if not grid_count else len(rest)
+        first = 0
+        if len(rest) > visible:
+            first = max(0, min(selected - grid_count - visible // 2,
+                               len(rest) - visible))
+            if first > 0:
+                listbox.pack_start(_marker("\u25b2"), False, False, 0)
+        for i, row in enumerate(rest[first:first + visible], start=first):
+            listbox.pack_start(
+                self._row_widget(row, (i + grid_count) == selected,
+                                 i + grid_count),
+                False, False, 0)
+        if first + visible < len(rest):
+            listbox.pack_start(_marker("\u25bc"), False, False, 0)
+        outer.pack_start(listbox, False, False, 0)
+
+        hint = Gtk.Label(label="D-pad  move        A  select        B  back")
+        hint.set_name("hint")
+        outer.pack_start(hint, False, False, 8)
+        return outer
+
+    def _row_widget(self, row, selected, index):
+        """One line in the list below the grid: label left, value right."""
+        line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=self._px(30))
+        normal = "hint" if row.dim else "row"
+        label = Gtk.Label(label=row.label, xalign=0)
+        label.set_size_request(self._px(470), -1)
+        line.pack_start(label, False, False, 0)
+        widgets = [(line, normal, "rowsel"), (label, normal, "rowsel")]
+        if row.value:
+            value = Gtk.Label(label=row.value, xalign=1)
+            value.set_size_request(self._px(430), -1)
+            line.pack_start(value, False, False, 0)
+            widgets.append((value, "hint" if row.dim else "value", "valuesel"))
+        self._register(index, widgets, selected)
+        return line
+
+    def _cell(self, row, selected, index):
+        """One binding in the grid: button name, then what it does."""
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=self._px(16))
+        name = Gtk.Label(label=row.label, xalign=0)
+        name.set_size_request(self._px(112), -1)
+        box.pack_start(name, False, False, 0)
+        act = Gtk.Label(label=row.value, xalign=0)
+        act.set_size_request(self._px(210), -1)
+        act.set_ellipsize(3)             # PANGO_ELLIPSIZE_END
+        box.pack_start(act, False, False, 0)
+        self._register(index, [(box, "cell", "cellsel"),
+                               (name, "btn", "btnsel"),
+                               (act, "act", "actsel")], selected)
+        return box
+
+    def _register(self, index, widgets, selected):
+        """Remember which widgets belong to a row, and how each is styled when
+        the cursor is on it or not, so selection can be moved without
+        rebuilding the window."""
+        self._widgets[index] = widgets
+        for widget, normal, chosen in widgets:
+            widget.set_name(chosen if selected else normal)
+
+    def _apply_selection(self, index):
+        """Move the highlight by restyling. False if the row is not on screen,
+        in which case the caller has to rebuild (a scrolled list)."""
+        if index not in self._widgets:
+            return False
+        for i, widgets in self._widgets.items():
+            on = (i == index)
+            for widget, normal, chosen in widgets:
+                widget.set_name(chosen if on else normal)
+        return True
+
+    # -- navigation --------------------------------------------------------
+    def navigate(self, button):
+        if not self.visible:
+            return
+
+        if self.busy:
+            if button == "S":
+                self.cancel_calibration()
+            return
+
+        keymap = self._keymap()
+        if keymap is not None:
+            self._navigate_keys(button, keymap)
+            return
+
+        rows = self.current[1]
+        grid_count = self._grid_count()
+        selectable = [i for i, r in enumerate(rows) if not r.dim]
+        if not selectable:
+            if button == "S":
+                self.pop()
+            return
+        if self.current[2] not in selectable:
+            self.current[2] = selectable[0]
+        here = self.current[2]
+
+        if button in ("UP", "DOWN", "LEFT", "RIGHT"):
+            moved = self._move(here, button, rows, grid_count, selectable)
+            if moved == self.current[2]:
+                return                   # nothing to redraw
+            self.current[2] = moved
+            # Restyle in place. Rebuilding the whole window here is what made
+            # the overlay flash on every press.
+            if not self._apply_selection(moved):
+                self._build_window()     # the list scrolled; it must be redrawn
+        elif button == "E":
+            row = rows[here]
+            if row.go:
+                self.message = ""
+                row.go()
+        elif button == "S":
+            self.pop()
+
+    def _navigate_keys(self, button, keymap):
+        """Move around the drawn keyboard by position, not by list order.
+
+        Rows have different key widths, so up and down pick whichever key in
+        the next row sits under the middle of the current one -- the way a
+        finger would move -- rather than the key with the next index.
+        """
+        here = self.current[2]
+        spans = {}                       # index -> (row, start unit, width)
+        for r, line in enumerate(keymap):
+            col = 0
+            for index, width in line:
+                if index is not None:
+                    spans[index] = (r, col, width)
+                col += width
+        if here not in spans:
+            here = min(spans) if spans else 0
+
+        row, start, width = spans[here]
+        centre = start + width / 2.0
+
+        if button == "E":
+            target = self.current[1][here]
+            if target.go:
+                target.go()
+            return
+        if button == "S":
+            self.pop()
+            return
+
+        if button in ("LEFT", "RIGHT"):
+            same = sorted([i for i in spans if spans[i][0] == row],
+                          key=lambda i: spans[i][1])
+            at = same.index(here)
+            at = max(0, min(len(same) - 1, at + (1 if button == "RIGHT" else -1)))
+            new = same[at]
+        else:
+            step = 1 if button == "DOWN" else -1
+            target_row = row + step
+            if not (0 <= target_row < len(keymap)):
+                return
+            candidates = [i for i in spans if spans[i][0] == target_row]
+            if not candidates:
+                return
+            def distance(i):
+                """How far the centre is from a key, treating the key as the
+                span it occupies rather than a point.
+
+                Comparing centres puts C onto Alt instead of Space: Space is 24
+                units wide, so its centre is further away than a narrow key's
+                even when you are directly above it. A key you are over is at
+                distance zero.
+                """
+                _r, start, width = spans[i]
+                if start <= centre < start + width:
+                    return 0.0
+                return min(abs(centre - start), abs(centre - (start + width)))
+
+            new = min(candidates, key=distance)
+
+        if new == self.current[2]:
+            return
+        self.current[2] = new
+        if not self._apply_selection(new):
+            self._build_window()
+
+    def _move(self, here, button, rows, grid_count, selectable):
+        """Grid cells navigate in two dimensions; the list below is linear.
+
+        Left and right also step values on a row that has an adjuster, which
+        is how gyro and stick speed are changed without leaving the screen.
+        """
+        in_grid = here < grid_count
+        if not in_grid and button in ("LEFT", "RIGHT"):
+            row = rows[here]
+            if row.adjust:
+                row.adjust(1 if button == "RIGHT" else -1)
+            return here
+
+        if in_grid:
+            col, row_i = divmod(here, self.grid_rows)
+            columns = (grid_count + self.grid_rows - 1) // self.grid_rows
+            if button == "UP":
+                if row_i == 0:
+                    return here
+                return here - 1
+            if button == "DOWN":
+                nxt = here + 1
+                if row_i + 1 >= self.grid_rows or nxt >= grid_count:
+                    # Off the bottom of a column drops into the list below.
+                    self._last_grid = here
+                    return grid_count if grid_count < len(rows) else here
+                return nxt
+            step = self.grid_rows if button == "RIGHT" else -self.grid_rows
+            nxt = here + step
+            if 0 <= nxt < grid_count:
+                return nxt
+            if button == "RIGHT" and col + 1 >= columns:
+                return here
+            return here
+
+        # In the list.
+        order = [i for i in selectable if i >= grid_count]
+        if not order:
+            return here
+        at = order.index(here) if here in order else 0
+        if button == "DOWN":
+            return order[(at + 1) % len(order)]
+        if button == "UP":
+            if at == 0 and grid_count:
+                # Back to the cell the list was entered from, not to whichever
+                # cell happens to be last -- coming back somewhere else is
+                # disorienting when the grid is the main thing on screen.
+                back = self._last_grid
+                if back is None or back >= grid_count or back not in selectable:
+                    back = grid_count - 1
+                return back
+            return order[(at - 1) % len(order)]
+        return here
+
+def _marker(glyph):
+    label = Gtk.Label(label=glyph)
+    label.set_name("hint")
+    return label
+
+
+def _as_float(value, fallback):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _num(value):
+    return ("%g" % value) if value is not None else "-"
+
+
+def _step(steps, current, direction):
+    try:
+        index = min(range(len(steps)), key=lambda i: abs(steps[i] - current))
+    except ValueError:
+        return current
+    return steps[max(0, min(len(steps) - 1, index + direction))]
+
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+
+class Hud(object):
+    def __init__(self, args):
+        self.config_path = args.config
+        self.toast = Toast()
+        self.jsm = Jsm(args.fifo, args.log, self.on_layer)
+        self.panel = Panel(self.jsm, self.config_path, self.on_panel_closed)
+        combo = [b.strip() for b in args.combo.split(",") if b.strip()]
+        unknown = [b for b in combo if b not in BTN]
+        if unknown:
+            print("unknown buttons in --combo: %s" % ", ".join(unknown),
+                  file=sys.stderr)
+        self.pad = PadWatcher(combo or DEFAULT_COMBO,
+                              self.on_trigger, self.on_nav,
+                              prefer=args.pad)
+        self.quiet_until = 0.0
+        self.first_load = True
+
+    def start(self):
+        self.jsm.watch()
+        self.pad.start()
+
+    # -- events ------------------------------------------------------------
+    def on_layer(self, path):
+        """JSM loaded a config. Announce it, unless we caused it ourselves --
+        opening and closing the panel reloads the config and that is not a
+        layer change worth a toast."""
+        if time.time() < self.quiet_until:
+            return False
+        name = os.path.basename(path)
+        if name.endswith(".txt"):
+            name = name[:-4]
+        # The shared bases are included by every config, so JSM logs them right
+        # after the file that includes them. Announcing those meant two toasts
+        # on launch and no clear link to anything the player did.
+        if name.startswith("_"):
+            return False
+        # The first load is the game starting up, which needs no announcement.
+        if self.first_load:
+            self.first_load = False
+            return False
+        self.toast.show("LAYER: " + name.replace("_", " "))
+        return False
+
+    def on_trigger(self):
+        self.panel.toggle()
+        self.pad.navigating = self.panel.visible
+        if not self.panel.visible:
+            self.quiet_until = time.time() + 2
+        return False
+
+    def on_nav(self, button):
+        self.panel.navigate(button)
+        self.pad.navigating = self.panel.visible
+        return False
+
+    def on_panel_closed(self):
+        self.pad.navigating = False
+        self.quiet_until = time.time() + 2
+
+
+def log_stderr(message):
+    print("jsm-hud: %s" % message, file=sys.stderr)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", required=True,
+                        help="the JSM config the game was launched with")
+    parser.add_argument("--fifo", default="/tmp/jsm.cmd",
+                        help="JSM's stdin, for console commands")
+    parser.add_argument("--log", default="/tmp/jsm.log",
+                        help="JSM's stdout, watched for config loads")
+    parser.add_argument("--pad", default="Pro Controller",
+                        help="prefer the pad whose name contains this")
+    parser.add_argument("--combo", default=",".join(DEFAULT_COMBO),
+                        help="buttons that open the overlay, comma separated")
+    parser.add_argument("--list-devices", action="store_true",
+                        help="show input devices and which one would be used")
+    parser.add_argument("--self-test", action="store_true",
+                        help="show a toast and the panel, then exit")
+    args = parser.parse_args()
+
+    if args.list_devices:
+        list_input_devices()
+        return
+
+    hud = Hud(args)
+    hud.start()
+
+    def _exit_if_orphaned():
+        """Quit if whoever started us has gone.
+
+        pcgame_launch.py stops the HUD when the game ends, so normally this
+        never fires. It matters when the HUD was started by hand: such an
+        instance outlives the game and leaves an overlay on screen that
+        nothing owns and the player cannot close. Being orphaned -- reparented
+        to init -- is the reliable signal.
+        """
+        if os.getppid() == 1:
+            log_stderr("parent is gone, exiting")
+            if hud.panel.visible:
+                hud.panel.close()
+            Gtk.main_quit()
+            return False
+        return True
+
+    GLib.timeout_add_seconds(5, _exit_if_orphaned)
+
+    if args.self_test:
+        hud.toast.show("LAYER: self test", "jsm-hud is alive")
+        GLib.timeout_add_seconds(3, lambda: (hud.panel.open(), False)[1])
+        GLib.timeout_add_seconds(11, Gtk.main_quit)
+
+    try:
+        Gtk.main()
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == "__main__":
+    main()

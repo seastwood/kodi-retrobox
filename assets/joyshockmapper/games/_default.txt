@@ -1,0 +1,31 @@
+# ============================================================================
+# _default.txt - the mapping every PC game gets until it has one of its own.
+#
+# pcgame_launch.py loads this when a game names no "jsm" config, so a game
+# added to pcgames.json is playable with a controller straight away and the
+# on-screen reference (jsm-hud) is there to show what the buttons do.
+#
+# It is deliberately the first-person base: mouse-look on the right stick,
+# WASD on the left, and the usual shooter buttons. That suits most PC games,
+# and the ones it does not suit are exactly the ones worth writing a config
+# for -- press - and + together to reach the desktop layer, or use the
+# CONTROLLER entry on the Kodi home menu to edit any of this with the pad.
+#
+# Face-button names are POSITIONAL, not Nintendo labels:
+#   S = bottom      E = right      W = left      N = top
+# ============================================================================
+GyroConfigs/_base_fps.txt
+
+# Buttons the base leaves for the game to decide. These are the conventional
+# shooter bindings; nothing here is specific to any title.
+N  = LCONTROL      # crouch
+L3 = LSHIFT        # sprint / walk
+R3 = MMOUSE
+LEFT = 1           # weapon slots, for the games that have them
+L  = 2
+R  = 3
+
+# --- desktop layer ---------------------------------------------------------
+# Press - and + together for a cursor-driven layout (menus, launchers,
+# anything that wants a pointer); press + on its own to come back here.
+-++ = "layers/_default_desktop.txt"
