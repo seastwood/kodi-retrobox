@@ -45,6 +45,9 @@ can be built again on other hardware.
     ~/retro-console/install/adopt.sh          # unless your user is `retro`
     ~/retro-console/install/install.sh
 
+Then put your games in `~/Games/emulation/` and start Kodi. That is the whole
+process.
+
 That adds the libretro PPA, installs the packages in
 `system/packages.required.txt`, creates the directory layout, links the code
 into place, merges `templates/retroarch-settings.conf` into RetroArch's config,
@@ -95,15 +98,23 @@ use synthetic devices and fake ROM trees, so they touch nothing real.
 
 ## State of testing
 
-Installed from scratch on a clean Linux Mint 22.3 virtual machine, from an
-empty home: 24 packages, 18 cores, 619 shader presets, the timers, and 216
-checks passing. That run found five bugs that no amount of testing on the
-original machine could have — a PPA name stripped twice, an apt failure
-reported as success, and a config-repair heuristic that called a brand new
-config broken — all fixed.
+Built from nothing on a clean Linux Mint 22.3 virtual machine and played: wipe
+the home directory, clone, `adopt.sh`, one `install.sh` (52 seconds), drop a
+Mega Drive ROM into `~/Games/emulation/sega-genesis/`, and the game appears on
+the Kodi home menu with box art and a player count and launches with the CRT
+filter on.
 
-What is still untested is a full session on real hardware with a real
-controller and real ROMs: the virtual machine has neither.
+Doing that found eight things no amount of testing on the original machine
+could have, every one of them silent: a PPA name stripped twice, an apt failure
+reported as success, a config-repair heuristic that called a brand new config
+broken, Kodi never being started at login, every add-on needing approval by
+hand, the skin never being fetched, and -- the two that made a working install
+look like an empty one -- `content_database_path` and `libretro_info_path`
+never being set, so RetroArch scanned a folder of games, recognised nothing,
+and wrote no playlist without complaining.
+
+What remains untested is a controller: the virtual machine has no pads, so the
+player picker and the hold-to-exit bar are proven only on the original machine.
 
 ## Hardware it grew up on
 
