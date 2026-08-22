@@ -40,6 +40,7 @@ can be built again on other hardware.
 
 ## Installing
 
+    sudo apt install -y git                   # a stock Mint 22 has no git
     git clone https://github.com/seastwood/kodi-retrobox ~/retro-console
     ~/retro-console/install/adopt.sh          # unless your user is `retro`
     ~/retro-console/install/install.sh
@@ -94,10 +95,15 @@ use synthetic devices and fake ROM trees, so they touch nothing real.
 
 ## State of testing
 
-Installing has been rehearsed by cloning this repository, adopting it to a
-different home and installing into it: cores, shaders, add-ons, settings and
-the full suite. It has **not** yet been run on genuinely fresh hardware, so the
-package phase is the part still to prove.
+Installed from scratch on a clean Linux Mint 22.3 virtual machine, from an
+empty home: 24 packages, 18 cores, 619 shader presets, the timers, and 216
+checks passing. That run found five bugs that no amount of testing on the
+original machine could have — a PPA name stripped twice, an apt failure
+reported as success, and a config-repair heuristic that called a brand new
+config broken — all fixed.
+
+What is still untested is a full session on real hardware with a real
+controller and real ROMs: the virtual machine has neither.
 
 ## Hardware it grew up on
 
