@@ -215,11 +215,41 @@ if [ -d "$LOCAL" ]; then
     [ -e "$p" ] || continue
     copy_new "$p" "$TARGET_HOME/.local/share/retroarch/plists/$(basename "$p")"
   done
-  [ -f "$LOCAL/kodi/kodi.desktop" ] &&
-    copy_new "$LOCAL/kodi/kodi.desktop" "$TARGET_HOME/.config/autostart/kodi.desktop"
+  :
   ok "restored this machine's captured state from local/"
 else
   skip "no captured state (a fresh install: add ROMs and let the sync build the playlists)"
+fi
+
+# --------------------------------------------------------------- autostart --
+say "Starting Kodi at login"
+# Without this a freshly built machine boots to a desktop and the television
+# shows nothing until somebody finds a mouse.
+if [ -f "$TARGET_HOME/.config/autostart/kodi.desktop" ]; then
+  skip "already set to start at login"
+elif [ -f "$REPO/templates/kodi.desktop" ]; then
+  copy_new "$REPO/templates/kodi.desktop" "$TARGET_HOME/.config/autostart/kodi.desktop"
+  ok "Kodi will start at login (kodi-autostart.sh restarts it if it crashes)"
+else
+  warn "no autostart template; Kodi will not start on its own"
+fi
+
+# ------------------------------------------------------------------ games ---
+say "Where games go"
+GAMES="$TARGET_HOME/Games/emulation"
+if [ "$DRY" = 1 ]; then
+  skip "would create the ROM folders under $GAMES"
+else
+  made=0
+  while read -r folder; do
+    case "$folder" in ''|'#'*) continue ;; esac
+    [ -d "$GAMES/$folder" ] || { mkdir -p "$GAMES/$folder"; made=$((made+1)); }
+  done < "$REPO/system/rom-folders.txt"
+  copy_new "$REPO/templates/games-README.txt" "$GAMES/README.txt"
+  # A signpost from the repository, so the answer to "where do games go" is
+  # visible from the place people will be looking.
+  [ -e "$REPO/games" ] || ln -s "$GAMES" "$REPO/games"
+  ok "$GAMES ($made folders created; see its README.txt)"
 fi
 
 # ------------------------------------------------------------------- cores --
@@ -302,14 +332,23 @@ else
 fi
 
 # ------------------------------------------------------------------- notes --
-say "What this cannot do for you"
+say "What is left to do"
 cat <<'EOF'
-   ROMs, BIOS images and box art are not in the repository. Copy your ROMs to
-   ~/Games/emulation/<system>/ and your BIOS files to
-   ~/.local/share/retroarch/system/ (system/bios-present.txt lists the ones
-   this machine expects), then let the sync timer pick them up.
+   1. Start Kodi once and quit it. It creates its add-on database on first run,
+      and will ask about each add-on; say no if you like, the next step fixes
+      it properly.
 
-   Achievements need the real token from a backup's secrets/ directory.
+   2. Run:  install/kodi-setup.sh
+      That fetches the skin, enables every add-on without asking, and selects
+      the console look. Then start Kodi again.
+
+   3. Put games in ~/Games/emulation/ -- see the README.txt in there. BIOS
+      files go in ~/.local/share/retroarch/system/ instead; which ones each
+      system needs is in system/bios-required.txt.
+
+   Achievements are switched on but have no account; add yours in RetroArch's
+   own menu. Backups do nothing until you name a destination in
+   backup/backup.conf.
 EOF
 
 echo

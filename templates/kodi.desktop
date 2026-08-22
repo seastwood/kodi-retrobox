@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Kodi
+Comment=Start Kodi in fullscreen at login
+Exec=/home/retro/.local/bin/kodi-autostart.sh
+Icon=kodi
+Terminal=false
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=10
