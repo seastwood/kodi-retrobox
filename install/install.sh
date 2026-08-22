@@ -316,6 +316,22 @@ else
   done
 fi
 
+# -------------------------------------------------------------------- kodi --
+say "Kodi"
+if [ "$DRY" = 1 ]; then
+  skip "would run install/kodi-setup.sh"
+elif [ "$TARGET_HOME" != "$HOME" ]; then
+  skip "not configuring Kodi (installing into $TARGET_HOME)"
+elif [ -x "$HERE/kodi-setup.sh" ]; then
+  if pgrep -x kodi.bin >/dev/null 2>&1; then
+    warn "Kodi is running; quit it and run install/kodi-setup.sh"
+  else
+    "$HERE/kodi-setup.sh" 2>&1 | sed 's/^/  /'
+  fi
+else
+  warn "kodi-setup.sh is missing; Kodi will keep its default look"
+fi
+
 # ------------------------------------------------------------------ verify --
 say "Checking it works"
 if [ "$DRY" = 1 ]; then
@@ -341,20 +357,17 @@ fi
 # ------------------------------------------------------------------- notes --
 say "What is left to do"
 cat <<'EOF'
-   1. Start Kodi once and quit it. It creates its add-on database on first run,
-      and will ask about each add-on; say no if you like, the next step fixes
-      it properly.
+   1. Put games in ~/Games/emulation/ -- there is a README.txt in there
+      explaining the folders. BIOS files go in
+      ~/.local/share/retroarch/system/ instead; system/bios-required.txt says
+      which systems need which.
 
-   2. Run:  install/kodi-setup.sh
-      That fetches the skin, enables every add-on without asking, and selects
-      the console look. Then start Kodi again.
+   2. Log out and back in, or just start Kodi. Your games appear on the home
+      menu within ten minutes, with box art and player counts, or immediately
+      if you run ~/.local/bin/sync_games.py.
 
-   3. Put games in ~/Games/emulation/ -- see the README.txt in there. BIOS
-      files go in ~/.local/share/retroarch/system/ instead; which ones each
-      system needs is in system/bios-required.txt.
-
-   Achievements are switched on but have no account; add yours in RetroArch's
-   own menu. Backups do nothing until you name a destination in
+   That is all. Achievements are switched on but have no account -- add yours
+   in RetroArch's own menu. Backups do nothing until you name a destination in
    backup/backup.conf.
 EOF
 

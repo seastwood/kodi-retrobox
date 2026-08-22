@@ -56,6 +56,27 @@ done < "$REPO/system/kodi-addons.txt"
 # ------------------------------------------------------------- enable them ---
 say "Enabling add-ons"
 DB=$(ls -1 "$KODI/userdata/Database/"Addons*.db 2>/dev/null | sort | tail -1)
+if [ -z "$DB" ] && [ -n "${DISPLAY:-}" ]; then
+  # Kodi builds its add-on database on first run and there is no other way to
+  # make one. Rather than send somebody away to start it by hand, start it,
+  # wait for the database, and stop it again.
+  echo "   ..    Kodi has never run; starting it briefly to build its database"
+  ( kodi -fs >/dev/null 2>&1 & ) 
+  for _ in $(seq 1 40); do
+    sleep 2
+    DB=$(ls -1 "$KODI/userdata/Database/"Addons*.db 2>/dev/null | sort | tail -1)
+    [ -n "$DB" ] && break
+  done
+  sleep 4
+  pkill -x kodi.bin 2>/dev/null
+  for _ in $(seq 1 15); do
+    pgrep -x kodi.bin >/dev/null || break
+    sleep 1
+  done
+  pkill -9 -x kodi.bin 2>/dev/null
+  sleep 2
+  [ -n "$DB" ] && ok "database created" || warn "Kodi did not create one"
+fi
 if [ -z "$DB" ]; then
   warn "Kodi has not run yet, so it has no add-on database."
   echo "         Start Kodi once, quit it, then run this again."
