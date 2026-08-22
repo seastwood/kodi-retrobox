@@ -42,11 +42,14 @@ can be built again on other hardware.
 
     sudo apt install -y git                   # a stock Mint 22 has no git
     git clone https://github.com/seastwood/kodi-retrobox ~/retro-console
-    ~/retro-console/install/adopt.sh          # unless your user is `retro`
     ~/retro-console/install/install.sh
 
-Then put your games in `~/Games/emulation/` and start Kodi. That is the whole
-process.
+Then log out and back in, and put your games in `~/Games/emulation/`. That is
+the whole process — **[INSTALL.md](INSTALL.md) walks through it step by step**,
+including BIOS files, what the output means when a phase fails, and the
+optional extras.
+
+The clone has to be at `~/retro-console`; your username does not matter.
 
 For Windows and native PC games as well, use `install.sh --with-optional`:
 that adds Wine and builds JoyShockMapper (see *PC games* below).
@@ -136,7 +139,10 @@ same three steps.
 
 Absolute paths are baked into the code — it was written on a machine whose user
 is `retro`. That is invisible there and fatal anywhere else, so `adopt.sh`
-rewrites them once and `install.sh` refuses to run until they agree.
+rewrites them. There is nothing to remember: `install.sh` notices the mismatch
+and runs it for you, on a fresh install and again after any update that pulls
+in files still carrying the old home. `adopt.sh --check` reports what would
+change without touching anything.
 
 ## Nothing personal is in here
 
