@@ -1,0 +1,13 @@
+# Add-ons registered as disabled rather than enabled.
+#
+# Kodi asks about every add-on it finds that its database has not seen, which
+# on a fresh machine is all 135 it ships with. kodi-setup.sh registers them all
+# so nothing is ever asked; the ones listed here are registered switched off
+# because a games console has no use for them.
+#
+# visualization.spectrum is the animated bars shown while music plays. It is a
+# Recommends of the kodi package, so apt installs it whether or not you want it.
+visualization.spectrum
+# Only used for ripping audio CDs.
+audioencoder.kodi.builtin.aac
+audioencoder.kodi.builtin.wma

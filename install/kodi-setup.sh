@@ -81,33 +81,63 @@ if [ -z "$DB" ]; then
   warn "Kodi has not run yet, so it has no add-on database."
   echo "         Start Kodi once, quit it, then run this again."
 else
-  python3 - "$DB" "$ADDONS" <<'PY'
+  python3 - "$DB" "$ADDONS" /usr/share/kodi/addons \
+           "$REPO/system/kodi-addons-unused.txt" <<'PY'
 import os, sqlite3, sys, time
-db, addons_dir = sys.argv[1], sys.argv[2]
-# ~/.kodi/addons also holds Kodi's own "packages" and "temp" working
-# directories. An add-on is a directory with an addon.xml in it; anything else
-# put in this database is a row Kodi will never understand.
-ours = sorted(d for d in os.listdir(addons_dir)
-              if os.path.isfile(os.path.join(addons_dir, d, "addon.xml")))
+db = sys.argv[1]
+dirs = [sys.argv[2], sys.argv[3]]
+unused_file = sys.argv[4]
+
+# Kodi asks about every add-on its database has not seen, which on a fresh
+# machine is all 135 it ships with as well as ours. Registering them all is
+# what stops the person at the television being interrogated on first run.
+#
+# A directory with an addon.xml in it is an add-on; ~/.kodi/addons also holds
+# Kodi's own "packages" and "temp" working directories, and a row for those is
+# something Kodi will never understand.
+found = {}
+for d in dirs:
+    if not os.path.isdir(d):
+        continue
+    for name in os.listdir(d):
+        if os.path.isfile(os.path.join(d, name, "addon.xml")):
+            found[name] = True
+
+unused = set()
+try:
+    for line in open(unused_file, encoding="utf-8"):
+        line = line.strip()
+        if line and not line.startswith("#"):
+            unused.add(line)
+except OSError:
+    pass
+
 con = sqlite3.connect(db)
 cur = con.cursor()
 now = time.strftime("%Y-%m-%d %H:%M:%S")
-changed = []
-for addon in ours:
+added = enabled = disabled = 0
+for addon in sorted(found):
+    want = 0 if addon in unused else 1
     row = cur.execute("select enabled from installed where addonID=?", (addon,)).fetchone()
     if row is None:
-        cur.execute("insert into installed(addonID, enabled, installDate) values(?,1,?)",
-                    (addon, now))
-        changed.append(addon + " (added)")
-    elif not row[0]:
-        cur.execute("update installed set enabled=1, disabledReason=0 where addonID=?",
-                    (addon,))
-        changed.append(addon)
+        cur.execute("insert into installed(addonID, enabled, installDate) values(?,?,?)",
+                    (addon, want, now))
+        added += 1
+        if want == 0:
+            disabled += 1
+    elif row[0] != want:
+        cur.execute("update installed set enabled=?, disabledReason=0 where addonID=?",
+                    (want, addon))
+        if want:
+            enabled += 1
+        else:
+            disabled += 1
 con.commit()
 con.close()
-print("   ok    %d add-ons already enabled, %d changed" % (len(ours) - len(changed), len(changed)))
-for c in changed:
-    print("           enabled %s" % c)
+print("   ok    %d add-ons known to Kodi; %d registered, %d enabled, %d switched off"
+      % (len(found), added, enabled, disabled))
+if disabled:
+    print("           off: %s" % ", ".join(sorted(unused & set(found))))
 PY
 fi
 
