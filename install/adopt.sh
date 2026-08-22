@@ -37,7 +37,8 @@ fi
 files=$(grep -rl "$OLD" "$REPO" \
         --include='*.py' --include='*.sh' --include='*.service' \
         --include='*.timer' --include='*.desktop' --include='*.md' \
-        --include='*.json' --include='*.conf' --include='*.example' 2>/dev/null \
+        --include='*.json' --include='*.conf' --include='*.example' \
+        --include='*.xml' 2>/dev/null \
         | grep -v '/\.git/')
 count=$(printf '%s\n' $files | grep -c . || true)
 hits=$(grep -rho "$OLD" $files 2>/dev/null | wc -l)

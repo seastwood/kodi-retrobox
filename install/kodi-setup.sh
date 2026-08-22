@@ -130,6 +130,16 @@ if [ ! -f "$SKIN_CONF" ]; then
   skip "no skin settings template"
 else
   mkdir -p "$SKIN_DATA"
+  # Kodi rewrites this file at startup from its own defaults, so setting three
+  # keys in an otherwise empty file does not survive -- the skin came up and
+  # asked about backgrounds anyway. Lay down the complete set first; that is
+  # what the look actually is, and the keys then stick.
+  FULL="$REPO/templates/skin-settings.xml"
+  have=$(grep -c "<setting" "$SKIN_DATA/settings.xml" 2>/dev/null || echo 0)
+  if [ -f "$FULL" ] && [ "$have" -lt 100 ]; then
+    cp "$FULL" "$SKIN_DATA/settings.xml"
+    ok "installed the full skin settings ($(grep -c '<setting' "$FULL") of them)"
+  fi
   python3 - "$SKIN_DATA/settings.xml" "$SKIN_CONF" <<'PY'
 import os, re, sys
 path, conf = sys.argv[1], sys.argv[2]
