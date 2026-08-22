@@ -16,3 +16,6 @@ pkg-config
 libgtk-3-dev
 libayatana-appindicator3-dev
 libevdev-dev
+# JoyShockLibrary, which JoyShockMapper pulls in during its build, needs this
+# and says so only once cmake is already running.
+libhidapi-dev

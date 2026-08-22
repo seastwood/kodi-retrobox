@@ -23,7 +23,7 @@ else
   for tool in cmake g++ git pkg-config; do
     command -v "$tool" >/dev/null || { warn "$tool is missing; run install.sh --with-optional first"; exit 1; }
   done
-  for mod in gtk+-3.0 ayatana-appindicator3-0.1 libevdev; do
+  for mod in gtk+-3.0 ayatana-appindicator3-0.1 libevdev hidapi-hidraw; do
     pkg-config --exists "$mod" || { warn "development files for $mod are missing"; exit 1; }
   done
 
@@ -44,10 +44,18 @@ else
       skip "patches already applied (or do not fit this revision)"
     fi
   fi
-  cmake -S . -B build -DCMAKE_BUILD_TYPE=Release >/dev/null 2>&1 ||
-    { warn "cmake failed"; exit 1; }
-  cmake --build build -j"$(nproc)" >/dev/null 2>&1 ||
-    { warn "the build failed; run it by hand in $SRC to see why"; exit 1; }
+  if ! cmake -S . -B build -DCMAKE_BUILD_TYPE=Release >/tmp/jsm-cmake.log 2>&1; then
+    warn "cmake failed:"
+    grep -iE "error|not found|required" /tmp/jsm-cmake.log | head -6 | sed 's/^/         /'
+    echo "         full output in /tmp/jsm-cmake.log"
+    exit 1
+  fi
+  if ! cmake --build build -j"$(nproc)" >/tmp/jsm-build.log 2>&1; then
+    warn "the build failed:"
+    grep -iE "error" /tmp/jsm-build.log | head -6 | sed 's/^/         /'
+    echo "         full output in /tmp/jsm-build.log"
+    exit 1
+  fi
   BIN=$(find "$SRC/build" -name JoyShockMapper -type f -perm -u+x | head -1)
   [ -n "$BIN" ] || { warn "built, but no JoyShockMapper binary was produced"; exit 1; }
   mkdir -p "$LIB"
