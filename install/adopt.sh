@@ -30,7 +30,8 @@ if [ -z "$OLD" ]; then
   exit 0
 fi
 if [ "$OLD" = "$NEW" ]; then
-  echo "already adopted: the code already points at $NEW"
+  echo "nothing to adopt: this machine is $NEW, which is what the repository"
+  echo "is written for"
   exit 0
 fi
 
@@ -63,7 +64,10 @@ case "$NEW" in
   "$OLD"*) left=$(( left - $(grep -rho "$NEW" $files 2>/dev/null | wc -l) )) ;;
 esac
 [ "$left" -lt 0 ] && left=0
-printf '%s\n' "$NEW" > "$REPO/system/home.txt"
+# system/home.txt deliberately keeps saying which home the *repository* is
+# written for. Rewriting it to this machine made adopt.sh a one-shot, so any
+# file pulled in later kept the original paths and failed at run time with
+# nothing to explain why.
 echo "rewritten; $left occurrences left"
 
 # A syntax check on everything touched, because a bad rewrite must not be

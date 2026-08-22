@@ -70,8 +70,18 @@ BAKED=""
 [ -s "$REPO/system/home.txt" ] && BAKED=$(head -1 "$REPO/system/home.txt")
 BAKED="${BAKED%/}"
 if [ -n "$BAKED" ] && [ "$BAKED" != "${TARGET_HOME%/}" ]; then
-  bad "the code points at $BAKED but this is $TARGET_HOME"
-  echo "         run:  $HERE/adopt.sh '$TARGET_HOME'   then try again"
+  # Every update pulls in files still carrying the repository's own home, so
+  # adapting is a normal part of installing rather than a one-off ceremony.
+  if grep -rqs "$BAKED" "$REPO/bin" "$REPO/addons" "$REPO/lib" 2>/dev/null; then
+    if [ "$DRY" = 1 ]; then
+      skip "would adapt paths from $BAKED to $TARGET_HOME"
+    else
+      "$HERE/adopt.sh" "$TARGET_HOME" | sed 's/^/         /'
+      ok "adapted the paths to this machine"
+    fi
+  else
+    ok "paths already adapted to $TARGET_HOME"
+  fi
 fi
 [ "$FAILED" -gt 0 ] && { echo; echo "preflight failed"; exit 1; }
 
