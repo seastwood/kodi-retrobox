@@ -1,0 +1,21 @@
+__pycache__/
+*.pyc
+
+# This machine's own state and secrets. Captured by install/capture.sh, carried
+# by the backup, never published: it is one person's game library, settings and
+# credentials, and the point of this repository is that anyone can start from
+# it.
+secrets/
+state/
+local/
+backup/backup.conf
+
+# Snapshots of what happens to be installed here, as opposed to what this
+# console needs (system/packages.required.txt).
+system/packages.manual.txt
+system/uname.txt
+system/distro.txt
+system/kodi-addons.txt
+system/bios-present.txt
+system/systemd-user-units.txt
+system/retroarch-cores.txt

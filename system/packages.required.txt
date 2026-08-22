@@ -1,0 +1,42 @@
+# Everything this console needs, derived from what the code actually calls
+# rather than from a dump of installed packages. `apt-mark showmanual` on the
+# live machine lists 1878 packages because it includes the whole Mint desktop;
+# this is the part that matters.
+
+# Emulation
+retroarch
+retroarch-assets
+retroarch-data
+libretro-core-info
+
+# Front end
+kodi
+kodi-eventclients-kodi-send
+kodi-peripheral-joystick
+kodi-inputstream-adaptive
+
+# The player picker, the hold-to-exit overlay and the icon drawing
+python3-pygame
+python3-evdev
+python3-pil
+
+# Screen, window and input plumbing the launcher drives
+x11-xserver-utils
+wmctrl
+xdotool
+scrot
+libnotify-bin
+onboard
+
+# Bluetooth pairing (script.bluetooth)
+bluez
+
+# USB over IP (script.usbip); usbip lives in linux-tools
+linux-tools-common
+linux-tools-generic
+
+# Housekeeping: backups, the repo itself, downloading cores and art
+rsync
+git
+curl
+unzip

@@ -1,0 +1,20 @@
+# The cores this console installs. Names are libretro buildbot names;
+# install.sh fetches each as <name>.zip into ~/.local/lib/retroarch/cores.
+2048_libretro
+boom3_xp_libretro
+dolphin_libretro
+DoubleCherryGB_libretro
+ecwolf_libretro
+fbalpha2012_cps2_libretro
+fceumm_libretro
+flycast_libretro
+genesis_plus_gx_wide_libretro
+mednafen_psx_hw_libretro
+mednafen_supafaust_libretro
+mednafen_vb_libretro
+mupen64plus_next_libretro
+ppsspp_libretro
+prboom_libretro
+skyemu_libretro
+snes9x_libretro
+vitaquake3_libretro

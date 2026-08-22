@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<addon id="script.joyshock" name="JoyShockMapper" version="1.1.0" provider-name="local">
+  <requires>
+    <import addon="xbmc.python" version="3.0.0"/>
+  </requires>
+  <extension point="xbmc.python.script" library="main.py">
+    <provides>executable</provides>
+  </extension>
+  <extension point="xbmc.service" library="service.py"/>
+  <extension point="xbmc.addon.metadata">
+    <summary lang="en_GB">Configure the controller mapping for the PC games</summary>
+    <description lang="en_GB">Edits the JoyShockMapper configs that pcgame_launch.py loads: choose which config each PC game uses, rebind any button, build combos and hold layers, and adjust the gyro, stick and calibration settings. Navigable with a controller. Also runs a watchdog that revives a controller left silent after a game.</description>
+    <platform>linux</platform>
+    <license>MIT</license>
+  </extension>
+</addon>

@@ -1,0 +1,23 @@
+# Where backups go. One destination per line; all of them are written, so a
+# local copy and an off-box copy can run side by side. Blank lines and lines
+# starting with # are ignored.
+#
+#   local:/path/on/this/machine
+#   ssh:user@host:/path/on/that/machine      (uses SSH_KEY below)
+#   path:/mnt/somewhere/already/mounted      (a NAS share, a USB disk)
+#
+# Nothing is enabled until at least one line is uncommented.
+
+# local:/home/retro/backups
+# ssh:piuser@192.0.2.10:/srv/retro-backup
+# path:/mnt/nas/retro-backup
+
+# How many dated snapshots to keep at each destination.
+GENERATIONS=7
+
+# Key used for ssh: destinations.
+SSH_KEY=/home/retro/.ssh/id_ed25519_usbip
+
+# Extra directories to include, one per line, prefixed with "include:".
+# The defaults below are always included; these are for anything else.
+# include:/home/retro/Games/emulation/sega-genesis

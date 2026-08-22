@@ -1,0 +1,223 @@
+import glob
+import json
+import os
+import subprocess
+import sys
+from urllib.parse import parse_qsl, urlencode
+
+import xbmc
+import xbmcgui
+import xbmcplugin
+
+BASE = sys.argv[0]
+HANDLE = int(sys.argv[1])
+
+PLAYLIST_DIR = "/home/retro/.local/share/retroarch/plists"
+THUMB_DIR = "/home/retro/.local/share/retroarch/thumbnails"
+# Player-assignment screen; it execs RetroArch once pads are claimed.
+PICKER = "/home/retro/.local/bin/ra_players.py"
+# Native PC games (not RetroArch content) are described here.
+PCGAMES = "/home/retro/.local/share/pcgames.json"
+# Shown when a PC game has no artwork of its own.
+PC_FALLBACK_ART = "/home/retro/.kodi/media/consoles/_pcgames.png"
+# Wrapper that handles window focus and returning to Kodi afterwards.
+PC_LAUNCHER = "/home/retro/.local/bin/pcgame_launch.py"
+
+# RetroArch system names are long; these read better on a TV.
+SHORT_NAMES = {
+    "Nintendo - Super Nintendo Entertainment System": "Super Nintendo",
+    "Nintendo - Nintendo 64": "Nintendo 64",
+    "Nintendo - Game Boy Advance": "Game Boy Advance",
+    "Nintendo - Game Boy": "Game Boy",
+    "Sega - Mega-CD - Sega CD": "Sega CD",
+    "Sega - Mega Drive - Genesis": "Genesis",
+    "Nintendo - Nintendo Entertainment System": "NES",
+}
+
+
+def url(**kwargs):
+    return BASE + "?" + urlencode(kwargs)
+
+
+def short_name(system):
+    if system in SHORT_NAMES:
+        return SHORT_NAMES[system]
+    for prefix in ("Nintendo - ", "Sega - ", "Sony - ", "Atari - "):
+        if system.startswith(prefix):
+            return system[len(prefix):]
+    return system
+
+
+def art_for(system, label):
+    art = {}
+    for kind, keys in (("Named_Boxarts", ("thumb", "poster", "icon")),
+                       ("Named_Snaps", ("fanart",)),
+                       ("Named_Titles", ("banner",))):
+        path = os.path.join(THUMB_DIR, system, kind, label + ".png")
+        if os.path.exists(path):
+            for key in keys:
+                art[key] = path
+    return art
+
+
+def playlists():
+    for path in sorted(glob.glob(os.path.join(PLAYLIST_DIR, "*.lpl"))):
+        try:
+            with open(path) as handle:
+                yield os.path.basename(path)[:-4], json.load(handle)
+        except (ValueError, OSError):
+            continue
+
+
+def list_systems():
+    xbmcplugin.setPluginCategory(HANDLE, "Consoles")
+    xbmcplugin.setContent(HANDLE, "games")
+    for system, data in playlists():
+        items = data.get("items", [])
+        if not items:
+            continue
+        item = xbmcgui.ListItem(label=short_name(system))
+        item.setInfo("game", {"title": short_name(system),
+                              "platform": short_name(system)})
+        # Use the first game's box art so each console tile has an image.
+        cover = art_for(system, items[0].get("label", ""))
+        if cover:
+            item.setArt({"icon": cover.get("thumb", ""),
+                         "thumb": cover.get("thumb", "")})
+        item.setLabel2("%d games" % len(items))
+        xbmcplugin.addDirectoryItem(HANDLE, url(system=system), item, True)
+    xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_LABEL)
+    xbmcplugin.endOfDirectory(HANDLE)
+
+
+def list_games(system):
+    xbmcplugin.setPluginCategory(HANDLE, short_name(system))
+    xbmcplugin.setContent(HANDLE, "games")
+    for name, data in playlists():
+        if name != system:
+            continue
+        for entry in data.get("items", []):
+            label = entry.get("label", "")
+            item = xbmcgui.ListItem(label=label)
+            item.setInfo("game", {"title": label,
+                                  "platform": short_name(system)})
+            item.setArt(art_for(system, label))
+            item.setProperty("IsPlayable", "false")
+            target = url(play="1",
+                         core=entry.get("core_path", ""),
+                         rom=entry.get("path", ""))
+            xbmcplugin.addDirectoryItem(HANDLE, target, item, False)
+        break
+    xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_LABEL)
+    xbmcplugin.endOfDirectory(HANDLE)
+
+
+def launch(core, rom):
+    if not (core and rom):
+        xbmcgui.Dialog().notification("RetroArch", "Missing core or ROM path",
+                                      xbmcgui.NOTIFICATION_ERROR)
+        return
+    if not os.path.exists(rom):
+        xbmcgui.Dialog().notification("RetroArch", "ROM not found",
+                                      xbmcgui.NOTIFICATION_ERROR)
+        return
+    run([PICKER, "-f", "-L", core, rom], os.path.basename(rom))
+
+
+def run(argv, what, cwd=None):
+    # Debian/Ubuntu Kodi builds strip the System.Exec builtins, so spawn directly.
+    env = dict(os.environ)
+    env.setdefault("DISPLAY", ":0")
+    try:
+        subprocess.Popen(argv, env=env, cwd=cwd,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+    except OSError as exc:
+        xbmc.log("plugin.program.retroarch: launch failed: %s" % exc, xbmc.LOGERROR)
+        xbmcgui.Dialog().notification("RetroArch", "Could not start RetroArch",
+                                      xbmcgui.NOTIFICATION_ERROR)
+        return
+    xbmc.log("plugin.program.retroarch: launched %s" % " ".join(argv), xbmc.LOGINFO)
+    xbmcgui.Dialog().notification("RetroArch", what, xbmcgui.NOTIFICATION_INFO, 3000)
+
+
+def reap():
+    # Popen children stay as zombies under kodi.bin until reaped; clear any
+    # finished RetroArch processes each time the plugin is invoked.
+    try:
+        while os.waitpid(-1, os.WNOHANG)[0] != 0:
+            pass
+    except (ChildProcessError, OSError):
+        pass
+
+
+def pc_games():
+    try:
+        with open(PCGAMES) as fh:
+            return json.load(fh).get("games", [])
+    except (OSError, ValueError):
+        return []
+
+
+def list_pc_games():
+    xbmcplugin.setPluginCategory(HANDLE, "PC Games")
+    xbmcplugin.setContent(HANDLE, "games")
+    for game in pc_games():
+        exe = (game.get("exec") or [""])[0]
+        if not exe or not os.path.exists(exe):
+            continue
+        item = xbmcgui.ListItem(label=game.get("name", game["id"]))
+        item.setInfo("game", {"title": game.get("name", game["id"]),
+                              "platform": "PC"})
+        art = game.get("art") or game.get("icon")
+        if not (art and os.path.exists(art)) and os.path.exists(PC_FALLBACK_ART):
+            art = PC_FALLBACK_ART
+        if art and os.path.exists(art):
+            item.setArt({"thumb": art, "poster": art, "icon": art})
+        item.setProperty("IsPlayable", "false")
+        target = url(pcgame=game["id"])
+        xbmcplugin.addDirectoryItem(HANDLE, target, item, False)
+    xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_LABEL)
+    xbmcplugin.endOfDirectory(HANDLE)
+
+
+def launch_pc(game_id):
+    for game in pc_games():
+        if game.get("id") == game_id:
+            argv = game.get("exec") or []
+            if not argv or not os.path.exists(argv[0]):
+                xbmcgui.Dialog().notification("PC Game", "Executable not found",
+                                              xbmcgui.NOTIFICATION_ERROR)
+                return
+            wrapped = [PC_LAUNCHER,
+                       "--match", game.get("window") or game.get("name", game_id)]
+            if game.get("cwd"):
+                wrapped += ["--cwd", game["cwd"]]
+            wrapped += ["--"] + argv
+            if not os.path.exists(PC_LAUNCHER):
+                wrapped = argv          # fall back to a plain launch
+            run(wrapped, game.get("name", game_id), cwd=game.get("cwd"))
+            return
+    xbmcgui.Dialog().notification("PC Game", "Unknown game: %s" % game_id,
+                                  xbmcgui.NOTIFICATION_ERROR)
+
+
+def main():
+    reap()
+    args = dict(parse_qsl(sys.argv[2][1:]))
+    if args.get("pcgames"):
+        list_pc_games()
+    elif args.get("pcgame"):
+        launch_pc(args["pcgame"])
+    elif args.get("open"):
+        run([PICKER, "-f"], "RetroArch")
+    elif args.get("play"):
+        launch(args.get("core", ""), args.get("rom", ""))
+    elif args.get("system"):
+        list_games(args["system"])
+    else:
+        list_systems()
+
+
+if __name__ == "__main__":
+    main()

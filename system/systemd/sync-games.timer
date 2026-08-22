@@ -1,0 +1,10 @@
+[Unit]
+Description=Look for newly added games periodically
+
+[Timer]
+OnStartupSec=3min
+OnUnitActiveSec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

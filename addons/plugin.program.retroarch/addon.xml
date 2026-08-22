@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<addon id="plugin.program.retroarch" name="RetroArch Games" version="1.0.0" provider-name="local">
+  <requires>
+    <import addon="xbmc.python" version="3.0.0"/>
+  </requires>
+  <extension point="xbmc.python.pluginsource" library="main.py">
+    <provides>game executable</provides>
+  </extension>
+  <extension point="xbmc.addon.metadata">
+    <summary lang="en_GB">Browse and launch RetroArch games by console</summary>
+    <description lang="en_GB">Builds per-console menus from your RetroArch playlists, with box art, and launches games in RetroArch using the core each playlist already specifies.</description>
+    <platform>linux</platform>
+    <license>MIT</license>
+  </extension>
+</addon>

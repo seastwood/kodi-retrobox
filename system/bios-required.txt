@@ -1,0 +1,17 @@
+# BIOS files each system needs, and where they go. These are not distributed
+# with this repository; supply your own dumps.
+#
+#   ~/.local/share/retroarch/system/
+#
+# Sega CD / Mega-CD   bios_CD_U.bin   (USA)   131072 bytes
+#                     bios_CD_E.bin   (Europe)
+#                     bios_CD_J.bin   (Japan)
+#     The core names the exact file it wanted in its error, and the launcher
+#     turns that into "Missing BIOS file: bios_CD_U.bin" on screen.
+#
+# Mega Drive          bios_MD.bin     optional TMSS boot ROM; unused unless the
+#                                     core's system_bootrom option is enabled
+#
+# Sonic & Knuckles    sk.bin + sk2chip.bin  optional, enables lock-on
+#
+# PlayStation, SNES, N64, Game Boy, GBA, Genesis: none required.

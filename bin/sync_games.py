@@ -1,0 +1,848 @@
+#!/usr/bin/env python3
+"""Bring playlists, cores, box art and the Kodi menu in line with what is on disk.
+
+Safe to run repeatedly: scanning dedupes, art is only fetched when missing, and
+the Kodi menu is only rebuilt when something actually changed.
+"""
+
+import glob
+import json
+import os
+import re
+import struct
+import subprocess
+import sys
+import urllib.parse
+import urllib.request
+
+ROMS = "/home/retro/Games/emulation"
+PLDIR = "/home/retro/.local/share/retroarch/plists"
+COREDIR = "/home/retro/.local/lib/retroarch/cores"
+INFODIR = "/usr/share/libretro/info"
+THUMBS = "/home/retro/.local/share/retroarch/thumbnails"
+ICONS = "/home/retro/.kodi/media/consoles"
+XMB = "/usr/share/libretro/assets/xmb/dot-art/png"
+BASE = "https://thumbnails.libretro.com"
+ART = ["Named_Boxarts", "Named_Snaps", "Named_Titles"]
+STATE = "/home/retro/.local/state/sync_games.json"
+# How many people can play each game, for the Kodi front end. The first is
+# written by this script; the second is hand-kept and always wins.
+RDB = "/usr/share/libretro/database/rdb"
+PLAYERS = "/home/retro/.local/share/gameplayers.json"
+PLAYERS_MANUAL = "/home/retro/.local/share/gameplayers.manual.json"
+
+# ROM folder -> core to assign for that playlist
+CORES = {
+    # snes9x rather than supafaust: supafaust does not expose memory the way
+    # RetroAchievements needs, so every SNES achievement came back
+    # "unsupported" (76 of 76 on Chrono Trigger).
+    "Nintendo - Super Nintendo Entertainment System": "snes9x_libretro",
+    "Nintendo - Nintendo 64": "mupen64plus_next_libretro",
+    "Nintendo - Game Boy Advance": "skyemu_libretro",
+    "Nintendo - Game Boy": "DoubleCherryGB_libretro",
+    "Sega - Mega-CD - Sega CD": "genesis_plus_gx_wide_libretro",
+    "Sega - Mega Drive - Genesis": "genesis_plus_gx_wide_libretro",
+    "Nintendo - GameCube": "dolphin_libretro",
+    "Sony - PlayStation": "mednafen_psx_hw_libretro",
+    "Nintendo - Nintendo Entertainment System": "fceumm_libretro",
+}
+
+# The data half of a disc image, as opposed to the file you actually launch.
+TRACK_EXTS = {"bin", "iso", "img"}
+# Files that stand for a whole disc, most specific first.
+CUE_EXTS = {"cue", "toc", "ccd"}
+
+_listing_cache = {}
+
+
+KODI_SEND = "/usr/bin/kodi-send"
+
+
+def tell_kodi(title, message):
+    """Put a problem on the television.
+
+    This runs from a timer every ten minutes and its output goes to the journal,
+    where nobody will ever see it. Anything that stops games appearing -- a
+    crash here, a playlist pointing at a core that is gone -- has to say so
+    where the person using the machine is actually looking.
+    """
+    if not os.path.exists(KODI_SEND):
+        return
+    clean = str(message).replace(",", " ").replace('"', "")[:180]
+    try:
+        subprocess.run([KODI_SEND, "--host=127.0.0.1",
+                        "--action=Notification(%s,%s,12000)" % (title, clean)],
+                       timeout=10, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def log(msg):
+    print(msg, flush=True)
+
+
+def display_name(core):
+    p = os.path.join(INFODIR, core + ".info")
+    if os.path.exists(p):
+        for line in open(p):
+            if line.startswith("display_name"):
+                return line.split('"')[1]
+    return core
+
+
+def sanitize(name):
+    for ch in '&*/:`<>?\\|"':
+        name = name.replace(ch, "_")
+    return name
+
+
+def quote(text):
+    return urllib.parse.quote(text, safe="()")
+
+
+def folder_stamp(path):
+    """Cheap fingerprint of a ROM folder: its mtime plus those of its children."""
+    stamps = [os.path.getmtime(path)]
+    for root, dirs, files in os.walk(path):
+        stamps.append(os.path.getmtime(root))
+        if len(stamps) > 400:
+            break
+    return max(stamps)
+
+
+def scan_all():
+    """Scan only folders that changed since last run - a full scan is expensive."""
+    try:
+        seen = json.load(open(STATE))
+    except (OSError, ValueError):
+        seen = {}
+    scanned = []
+    for entry in sorted(os.listdir(ROMS)):
+        path = os.path.join(ROMS, entry)
+        if not os.path.isdir(path):
+            continue
+        stamp = folder_stamp(path)
+        if seen.get(entry) == stamp:
+            continue
+        try:
+            subprocess.run(["retroarch", "--scan=%s" % path],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=900, check=False)
+            scanned.append(entry)
+            seen[entry] = stamp
+        except subprocess.TimeoutExpired:
+            log("  scan timed out: %s" % entry)
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    json.dump(seen, open(STATE, "w"))
+    return scanned
+
+
+def core_extensions(core):
+    """Extensions a core will accept, from its own .info file."""
+    path = os.path.join(INFODIR, core + ".info")
+    try:
+        for line in open(path):
+            if line.startswith("supported_extensions"):
+                raw = line.split('"')[1]
+                return set(e.strip().lower() for e in raw.split("|") if e.strip())
+    except OSError:
+        pass
+    return set()
+
+
+def playlist_folder(items):
+    """The top-level ROM folder a playlist's games live in.
+
+    Derived from the entries themselves rather than a hand-kept folder->system
+    map, so adding a game to a system that already has one game needs no
+    configuration at all.
+    """
+    for item in items:
+        path = item.get("path", "")
+        if path.startswith(ROMS + os.sep):
+            return path[len(ROMS) + 1:].split(os.sep)[0]
+    return None
+
+
+def uses_raw_tracks(items):
+    """Whether this system's games are raw dumps rather than disc images.
+
+    A cartridge system's entries really are .bin/.md files; a disc system's
+    entries are .cue/.chd, and any .bin beside them is track data -- or
+    something that is not a game at all, like a BIOS.
+    """
+    for item in items:
+        path = item.get("path", "")
+        ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+        if ext in TRACK_EXTS:
+            return True
+    return False
+
+
+def launchable(dirpath, files, exts, raw_ok=True):
+    """The files in one directory worth putting in a playlist.
+
+    A disc game is a cue (or an m3u for multi-disc) plus track data, and the
+    tracks must not become entries of their own -- but a cartridge game really
+    is a bare .bin, and the same core can serve both. Deciding per directory,
+    on what is actually sitting there, gets both right without a per-system
+    list: Sega CD folders hold a .cue so their .bin is skipped, Genesis folders
+    hold no .cue so their .bin is the game.
+    """
+    present = set(f.rsplit(".", 1)[-1].lower() for f in files if "." in f)
+    out = []
+    for name in sorted(files):
+        if "." not in name:
+            continue
+        stem, ext = name.rsplit(".", 1)
+        ext = ext.lower()
+        if ext not in exts:
+            continue
+        if ext in TRACK_EXTS and not raw_ok:
+            continue                      # this system's games are not raw dumps
+        if "m3u" in present and "m3u" in exts:
+            if ext != "m3u":
+                continue                  # the m3u covers every disc
+        elif present & CUE_EXTS:
+            if ext in TRACK_EXTS:
+                continue                  # the cue is the entry point
+        out.append((stem, os.path.join(dirpath, name)))
+    return out
+
+
+def fill_gaps():
+    """Add anything on disk that the playlist does not already list."""
+    added = []
+    covered = set()
+    for pl in sorted(glob.glob(os.path.join(PLDIR, "*.lpl"))):
+        system = os.path.basename(pl)[:-4]
+        core = CORES.get(system)
+        if not core:
+            continue
+        so = os.path.join(COREDIR, core + ".so")
+        if not os.path.exists(so):
+            log("  core for %s is not installed: %s.so" % (system, core))
+            continue
+        try:
+            data = json.load(open(pl))
+        except (OSError, ValueError):
+            continue
+        items = data.setdefault("items", [])
+        folder = playlist_folder(items)
+        if not folder:
+            continue                      # nothing to learn the folder from
+        covered.add(folder)
+        exts = core_extensions(core)
+        if not exts:
+            continue
+        have_paths = set(i.get("path") for i in items)
+        have_labels = set(i.get("label") for i in items)
+        name = display_name(core)
+        # An empty playlist has nothing to learn from, so fall back to
+        # trusting the folder the way a first scan would.
+        raw_ok = uses_raw_tracks(items) or not items
+        fresh = []
+        for dirpath, _dirs, files in os.walk(os.path.join(ROMS, folder)):
+            for stem, path in launchable(dirpath, files, exts, raw_ok):
+                if path in have_paths or stem in have_labels:
+                    continue
+                have_paths.add(path)
+                have_labels.add(stem)
+                fresh.append({
+                    "path": path,
+                    "label": stem,
+                    "core_path": so,
+                    "core_name": name,
+                    # What RetroArch itself writes for a manually added entry.
+                    "crc32": "00000000|crc",
+                    "db_name": system + ".lpl",
+                })
+        if fresh:
+            items.extend(fresh)
+            items.sort(key=lambda i: i.get("label", "").lower())
+            json.dump(data, open(pl, "w"), indent=2)
+            added.append("%s +%d" % (system, len(fresh)))
+            for item in fresh:
+                log("  added: %s / %s" % (system, item["label"]))
+    for entry in sorted(os.listdir(ROMS)):
+        if os.path.isdir(os.path.join(ROMS, entry)) and entry not in covered:
+            log("  no playlist covers %s/ - add the system to CORES in this "
+                "script and SHORT in kodi_menu.py" % entry)
+    return added
+
+
+# --- how many players a game takes ------------------------------------------
+
+# The libretro .rdb files carry a "users" field -- the number RetroArch shows
+# as "Users" in its own info panel. The format is a 16-byte header followed by
+# msgpack maps, one per release, so it needs a msgpack reader; there is no
+# libretrodb_tool in the Debian packaging and no msgpack module installed.
+
+def _mp(buf, i):
+    """Decode one msgpack value at i. Returns (value, next index)."""
+    b = buf[i]
+    i += 1
+    if b <= 0x7f:
+        return b, i
+    if b >= 0xe0:
+        return b - 0x100, i
+    if 0x80 <= b <= 0x8f:
+        return _mp_map(buf, i, b & 0x0f)
+    if 0x90 <= b <= 0x9f:
+        return _mp_arr(buf, i, b & 0x0f)
+    if 0xa0 <= b <= 0xbf:
+        n = b & 0x1f
+        return buf[i:i + n].decode("utf-8", "replace"), i + n
+    if b == 0xc0:
+        return None, i
+    if b == 0xc2:
+        return False, i
+    if b == 0xc3:
+        return True, i
+    if b in (0xc4, 0xc5, 0xc6):                    # bin 8/16/32
+        w = {0xc4: 1, 0xc5: 2, 0xc6: 4}[b]
+        n = int.from_bytes(buf[i:i + w], "big")
+        i += w
+        return buf[i:i + n], i + n
+    if b == 0xca:
+        return struct.unpack(">f", buf[i:i + 4])[0], i + 4
+    if b == 0xcb:
+        return struct.unpack(">d", buf[i:i + 8])[0], i + 8
+    if 0xcc <= b <= 0xcf:                          # uint 8/16/32/64
+        w = 1 << (b - 0xcc)
+        return int.from_bytes(buf[i:i + w], "big"), i + w
+    if 0xd0 <= b <= 0xd3:                          # int 8/16/32/64
+        w = 1 << (b - 0xd0)
+        return int.from_bytes(buf[i:i + w], "big", signed=True), i + w
+    if b in (0xd9, 0xda, 0xdb):                    # str 8/16/32
+        w = {0xd9: 1, 0xda: 2, 0xdb: 4}[b]
+        n = int.from_bytes(buf[i:i + w], "big")
+        i += w
+        return buf[i:i + n].decode("utf-8", "replace"), i + n
+    if b in (0xdc, 0xdd):                          # array 16/32
+        w = 2 if b == 0xdc else 4
+        return _mp_arr(buf, i + w, int.from_bytes(buf[i:i + w], "big"))
+    if b in (0xde, 0xdf):                          # map 16/32
+        w = 2 if b == 0xde else 4
+        return _mp_map(buf, i + w, int.from_bytes(buf[i:i + w], "big"))
+    raise ValueError("unhandled msgpack byte %#x" % b)
+
+
+def _mp_map(buf, i, n):
+    out = {}
+    for _ in range(n):
+        key, i = _mp(buf, i)
+        value, i = _mp(buf, i)
+        out[key] = value
+    return out, i
+
+
+def _mp_arr(buf, i, n):
+    out = []
+    for _ in range(n):
+        value, i = _mp(buf, i)
+        out.append(value)
+    return out, i
+
+
+def read_rdb(path):
+    """Every release in one libretro database."""
+    buf = open(path, "rb").read()
+    if buf[:8] != b"RARCHDB\x00":
+        return []
+    end = struct.unpack(">Q", buf[8:16])[0]
+    i, out = 16, []
+    while i < end:
+        row, i = _mp(buf, i)
+        if isinstance(row, dict):
+            out.append(row)
+    return out
+
+
+# "Legend of Zelda, The - Twilight Princess" against "The Legend of Zelda:
+# Twilight Princess": the article moves, and it is not always at the end.
+ARTICLE = re.compile(r"^(the|a|an)\s+|,\s*(the|a|an)\b")
+
+
+def title_key(label):
+    """A title reduced to something two databases can agree on.
+
+    They do not agree as shipped: the same GameCube game is "Mario Golf -
+    Toadstool Tour" in one row and "Mario Golf: Toadstool Tour" in another,
+    and "Legend of Zelda, The" in one and "The Legend of Zelda" in another,
+    so punctuation and the article both have to go before comparing.
+    """
+    base = re.sub(r"\s*\([^)]*\)", "", label).strip().lower()
+    base = ARTICLE.sub("", base).strip()
+    return "".join(c for c in base if c.isalnum())
+
+
+def closest(label, candidates):
+    """The candidate naming the same game, preferring shared region/disc tags."""
+    want, want_tags = title_key(label), tags(label)
+    scored = []
+    for cand in candidates:
+        if title_key(cand) != want:
+            continue
+        ct = tags(cand)
+        scored.append((len(want_tags & ct) * 2 - len(ct ^ want_tags), -len(cand), cand))
+    return max(scored)[2] if scored else None
+
+
+def _disc_code(serial):
+    """The four-character disc code, from either way a serial is written.
+
+    A GameCube game appears twice: once as "GP7E01" with a player count, and
+    once as "DL-DOL-GP7E-USA" without one. The code is what joins them.
+    """
+    if isinstance(serial, bytes):
+        serial = serial.decode("latin1", "replace")
+    if not serial:
+        return None
+    return re.sub(r"^DL-DOL-", "", serial).replace("-", "")[:4] or None
+
+
+def player_index(system):
+    """(by crc, by name, by disc code, name -> disc code) for one system."""
+    path = os.path.join(RDB, system + ".rdb")
+    if not os.path.exists(path):
+        return None
+    by_crc, by_name, by_code, code_of = {}, {}, {}, {}
+    for row in read_rdb(path):
+        code = _disc_code(row.get("serial"))
+        if not row.get("users"):
+            # No count on this row, but its name may be the one the playlist
+            # uses, and its disc code leads to the row that does have one.
+            if code and row.get("name"):
+                code_of.setdefault(row["name"], code)
+            continue
+        users = row["users"]
+        crc = row.get("crc")
+        if isinstance(crc, bytes):
+            crc = crc.hex()
+        if crc:
+            by_crc.setdefault(crc.lower(), users)
+        if code:
+            by_code.setdefault(code, users)
+        for key in ("name", "rom_name"):
+            value = row.get(key)
+            if value:
+                if key == "rom_name":
+                    value = value.rsplit(".", 1)[0]
+                by_name.setdefault(value, users)
+    return by_crc, by_name, by_code, code_of
+
+
+def entry_players(entry, index):
+    """How many players this playlist entry takes, or None."""
+    by_crc, by_name, by_code, code_of = index
+    crc = (entry.get("crc32") or "").split("|")[0].strip().lower()
+    if crc and crc != "00000000" and crc in by_crc:
+        return by_crc[crc]
+    labels = [entry.get("label", ""),
+              os.path.basename(entry.get("path", "")).rsplit(".", 1)[0]]
+    for label in labels:
+        if label in by_name:
+            return by_name[label]
+    for label in labels:
+        hit = closest(label, by_name)
+        if hit:
+            return by_name[hit]
+    for label in labels:
+        hit = closest(label, code_of)
+        if hit and code_of[hit] in by_code:
+            return by_code[code_of[hit]]
+    return None
+
+
+def player_counts():
+    """Write how many players each game takes, for the Kodi front end.
+
+    Hand-kept entries in PLAYERS_MANUAL always win: the Sega CD database
+    carries no player counts at all (0 of its 427 rows), and a database can
+    simply be wrong.
+    """
+    sources = glob.glob(os.path.join(PLDIR, "*.lpl")) + [PLAYERS_MANUAL]
+    newest = max([os.path.getmtime(p) for p in sources if os.path.exists(p)] or [0])
+    if os.path.exists(PLAYERS) and os.path.getmtime(PLAYERS) >= newest:
+        return None                       # nothing has changed; the rdbs are big
+    try:
+        manual = json.load(open(PLAYERS_MANUAL))
+    except (OSError, ValueError):
+        manual = {}
+    counts, found, total = {}, 0, 0
+    for pl in sorted(glob.glob(os.path.join(PLDIR, "*.lpl"))):
+        system = os.path.basename(pl)[:-4]
+        try:
+            items = json.load(open(pl)).get("items", [])
+        except (OSError, ValueError):
+            continue
+        index = player_index(system)
+        by_label = {}
+        for entry in items:
+            total += 1
+            label = entry.get("label", "")
+            users = manual.get(system, {}).get(label)
+            if users is None and index is not None:
+                users = entry_players(entry, index)
+            if users:
+                by_label[label] = int(users)
+                found += 1
+        if by_label:
+            counts[system] = by_label
+    json.dump({"counts": counts}, open(PLAYERS, "w"), indent=2, sort_keys=True)
+    return found, total
+
+
+# "Metal Gear Solid (USA) (Disc 1) (Rev 1)" -> base, number, and the rest of
+# the tags, which have to be kept or disc 2 of a different revision would join
+# the wrong set.
+DISC = re.compile(r"^(?P<base>.*?)\s*\(Disc (?P<n>\d+)\)\s*(?P<rest>.*)$", re.I)
+DISC_EXTS = {"cue", "chd", "ccd", "toc", "iso", "ciso"}
+
+
+def disc_sets():
+    """Join multi-disc games into one .m3u, and report the ones missing discs.
+
+    RetroArch treats an .m3u as a single game and exposes its discs through
+    the disk-control menu, so swapping happens in-game instead of the player
+    going back to Kodi to launch "Disc 2" -- which does not work anyway, since
+    the save is on the running instance.
+
+    Returns (m3us written, complaints, disc files an m3u now covers).
+    """
+    made, missing, covered = [], [], set()
+    for entry in sorted(os.listdir(ROMS)):
+        folder = os.path.join(ROMS, entry)
+        if not os.path.isdir(folder):
+            continue
+        for dirpath, _dirs, files in os.walk(folder):
+            groups = {}
+            for name in sorted(files):
+                stem, _dot, ext = name.rpartition(".")
+                if ext.lower() not in DISC_EXTS:
+                    continue
+                match = DISC.match(stem)
+                if not match:
+                    continue
+                key = (match.group("base"), match.group("rest"), ext.lower())
+                groups.setdefault(key, []).append((int(match.group("n")), name))
+            for (base, rest, _ext), discs in sorted(groups.items()):
+                discs.sort()
+                label = ("%s %s" % (base, rest)).strip()
+                if len(discs) < 2:
+                    missing.append("%s: only disc %d is here, so it cannot be "
+                                   "finished" % (label, discs[0][0]))
+                    continue
+                want = "".join(name + "\n" for _n, name in discs)
+                path = os.path.join(dirpath, base + ".m3u")
+                try:
+                    current = open(path).read()
+                except OSError:
+                    current = None
+                if current != want:
+                    with open(path, "w") as fh:
+                        fh.write(want)
+                    made.append("%s (%d discs)" % (label, len(discs)))
+                covered.update(os.path.join(dirpath, name) for _n, name in discs)
+    return made, missing, covered
+
+
+def drop_entries(paths):
+    """Remove playlist entries for files an .m3u now stands for."""
+    dropped = []
+    for pl in sorted(glob.glob(os.path.join(PLDIR, "*.lpl"))):
+        try:
+            data = json.load(open(pl))
+        except (OSError, ValueError):
+            continue
+        items = data.get("items", [])
+        keep = [i for i in items if i.get("path") not in paths]
+        if len(keep) == len(items):
+            continue
+        for item in items:
+            if item not in keep:
+                dropped.append(item.get("label", ""))
+        data["items"] = keep
+        json.dump(data, open(pl, "w"), indent=2)
+    return dropped
+
+
+def prune_missing():
+    """Drop entries whose ROM is no longer on disk.
+
+    A file that leaves the ROM tree leaves a playlist entry behind, and the
+    entry looks perfectly normal in Kodi -- picking it just fails silently.
+    That is not hypothetical: a folder of Sega BIOS images shipped inside
+    sega-genesis/ and the scan turned all seven into games, and the Sonic &
+    Knuckles lock-on chip is in the database as a title of its own, so the
+    database scan added it too. Both were fixed by moving the files out, which
+    only helps if the entries go with them.
+
+    Only paths under ROMS are considered: a PC game or a network path is not
+    this script's to judge.
+    """
+    dropped = []
+    for pl in sorted(glob.glob(os.path.join(PLDIR, "*.lpl"))):
+        system = os.path.basename(pl)[:-4]
+        try:
+            data = json.load(open(pl))
+        except (OSError, ValueError):
+            continue
+        items = data.get("items", [])
+        keep = [i for i in items
+                if not i.get("path", "").startswith(ROMS + os.sep)
+                or os.path.exists(i["path"])]
+        if len(keep) == len(items):
+            continue
+        for item in items:
+            if item not in keep:
+                log("  dropped: %s / %s (file is gone)"
+                    % (system, item.get("label")))
+        data["items"] = keep
+        json.dump(data, open(pl, "w"), indent=2)
+        dropped.append("%s -%d" % (system, len(items) - len(keep)))
+    return dropped
+
+
+def check_cores():
+    """Report playlists pointing at a core that is not installed.
+
+    This is silent everywhere else: RetroArch just fails to load the content,
+    and the playlist looks perfectly normal in Kodi. Swapping a core out from
+    under a playlist leaves exactly this state.
+    """
+    broken = []
+    for pl in sorted(glob.glob(os.path.join(PLDIR, "*.lpl"))):
+        system = os.path.basename(pl)[:-4]
+        try:
+            data = json.load(open(pl))
+        except (OSError, ValueError):
+            continue
+        wanted = {data.get("default_core_path")}
+        wanted |= {i.get("core_path") for i in data.get("items", [])}
+        for path in sorted(p for p in wanted if p):
+            if not os.path.exists(path):
+                log("  %s points at a core that is gone: %s"
+                    % (system, os.path.basename(path)))
+                broken.append(system)
+                break
+    return broken
+
+
+def assign_cores():
+    changed = []
+    for pl in sorted(glob.glob(os.path.join(PLDIR, "*.lpl"))):
+        system = os.path.basename(pl)[:-4]
+        core = CORES.get(system)
+        if not core:
+            continue
+        so = os.path.join(COREDIR, core + ".so")
+        if not os.path.exists(so):
+            continue
+        try:
+            data = json.load(open(pl))
+        except ValueError:
+            continue
+        name = display_name(core)
+        if data.get("default_core_path") == so and all(
+                i.get("core_path") == so for i in data.get("items", [])):
+            continue
+        data["default_core_path"] = so
+        data["default_core_name"] = name
+        for item in data.get("items", []):
+            item["core_path"] = so
+            item["core_name"] = name
+        json.dump(data, open(pl, "w"), indent=2)
+        changed.append(system)
+    return changed
+
+
+def server_listing(system, kind):
+    """File names the thumbnail server has for a system, fetched once."""
+    key = (system, kind)
+    if key in _listing_cache:
+        return _listing_cache[key]
+    url = "%s/%s/%s/" % (BASE, quote(system), kind)
+    names = []
+    try:
+        with urllib.request.urlopen(url, timeout=45) as r:
+            html = r.read().decode("utf-8", "ignore")
+        names = [urllib.parse.unquote(m)[:-4]
+                 for m in re.findall(r'href="([^"]+\.png)"', html)]
+    except Exception:
+        pass
+    _listing_cache[key] = names
+    return names
+
+
+def tags(label):
+    return set(re.findall(r"\(([^)]*)\)", label))
+
+
+def base_title(label):
+    return re.sub(r"\s*\([^)]*\)", "", label).strip().lower()
+
+
+def best_match(label, candidates):
+    """Exact match, else the closest same-title release (region/disc variants)."""
+    if label in candidates:
+        return label
+    want_base, want_tags = base_title(label), tags(label)
+    scored = []
+    for cand in candidates:
+        if base_title(cand) != want_base:
+            continue
+        ct = tags(cand)
+        # prefer shared tags (region, disc number), penalise extra ones
+        score = len(want_tags & ct) * 2 - len(ct ^ want_tags)
+        scored.append((score, -len(cand), cand))
+    if not scored:
+        return None
+    scored.sort(reverse=True)
+    return scored[0][2]
+
+
+def fetch_art():
+    got = fuzzy = missing = 0
+    for pl in sorted(glob.glob(os.path.join(PLDIR, "*.lpl"))):
+        system = os.path.basename(pl)[:-4]
+        try:
+            items = json.load(open(pl)).get("items", [])
+        except ValueError:
+            continue
+        for item in items:
+            label = sanitize(item.get("label", ""))
+            if not label:
+                continue
+            for kind in ART:
+                dest = os.path.join(THUMBS, system, kind, label + ".png")
+                if os.path.exists(dest) and os.path.getsize(dest) > 0:
+                    continue
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                remote = label
+                url = "%s/%s/%s/%s.png" % (BASE, quote(system), kind, quote(remote))
+                try:
+                    with urllib.request.urlopen(url, timeout=45) as r:
+                        open(dest, "wb").write(r.read())
+                    got += 1
+                    continue
+                except Exception:
+                    pass
+                # exact name missing - look for a close release on the server
+                alt = best_match(label, server_listing(system, kind))
+                if not alt:
+                    missing += 1
+                    if kind == "Named_Boxarts":
+                        log("  no art anywhere: %s / %s" % (system, label))
+                    continue
+                url = "%s/%s/%s/%s.png" % (BASE, quote(system), kind, quote(alt))
+                try:
+                    with urllib.request.urlopen(url, timeout=45) as r:
+                        open(dest, "wb").write(r.read())
+                    fuzzy += 1
+                    if kind == "Named_Boxarts":
+                        log("  matched '%s' -> '%s'" % (label, alt))
+                except Exception:
+                    missing += 1
+    return got, fuzzy, missing
+
+
+def sync_icons():
+    os.makedirs(ICONS, exist_ok=True)
+    added = 0
+    for pl in glob.glob(os.path.join(PLDIR, "*.lpl")):
+        system = os.path.basename(pl)[:-4]
+        dst = os.path.join(ICONS, system + ".png")
+        src = os.path.join(XMB, system + ".png")
+        if not os.path.exists(dst) and os.path.exists(src):
+            open(dst, "wb").write(open(src, "rb").read())
+            added += 1
+    return added
+
+
+def rebuild_menu():
+    subprocess.run([sys.executable, "/home/retro/.local/bin/kodi_menu.py"], check=False)
+
+
+def game_running():
+    """True if a real RetroArch (or the player picker) is live.
+
+    Scanning spawns its own RetroArch, which would fight a running game for the
+    display, so the sync defers rather than interrupting play.
+    """
+    try:
+        out = subprocess.run(["ps", "-eo", "stat,comm,args"],
+                             capture_output=True, text=True, timeout=20).stdout
+    except Exception:
+        return False
+    for line in out.splitlines()[1:]:
+        parts = line.split(None, 2)
+        if len(parts) < 2:
+            continue
+        stat, comm = parts[0], parts[1]
+        if "Z" in stat:                       # zombies are not running games
+            continue
+        if comm == "retroarch":
+            return True
+        if len(parts) > 2 and "ra_players.py" in parts[2]:
+            return True
+    return False
+
+
+def main():
+    if game_running():
+        log("a game or the player picker is running - skipping this sync")
+        return
+    # Before the scan, so a newly written .m3u is what gets picked up.
+    made, incomplete, covered = disc_sets()
+    for line in made:
+        log("  joined discs: %s" % line)
+    if covered:
+        for label in drop_entries(covered):
+            log("  replaced by its .m3u: %s" % label)
+    for line in incomplete:
+        log("  INCOMPLETE %s" % line)
+    scanned = scan_all()
+    log("scanned: %s" % (", ".join(scanned) if scanned else "nothing changed"))
+    # After the database scan, never instead of it: anything the database can
+    # identify keeps its proper metadata, and this picks up the rest.
+    gaps = fill_gaps()
+    if gaps:
+        log("added from disk: %s" % ", ".join(gaps))
+    gone = prune_missing()
+    if gone:
+        log("removed, no longer on disk: %s" % ", ".join(gone))
+    changed = assign_cores()
+    if changed:
+        log("cores assigned: %s" % ", ".join(changed))
+    broken = check_cores()
+    if broken:
+        names = ", ".join(sorted(set(broken)))
+        log("playlists that will not load: %s" % names)
+        tell_kodi("Games will not launch", "%s: the emulator core is missing" % names)
+    if incomplete:
+        tell_kodi("Incomplete game", incomplete[0].split(":")[0] +
+                  " is missing a disc")
+    players = player_counts()
+    if players:
+        log("player counts: %d of %d games" % players)
+    got, fuzzy, missing = fetch_art()
+    log("art: %d exact, %d matched-by-name, %d unavailable" % (got, fuzzy, missing))
+    icons = sync_icons()
+    if icons:
+        log("console icons added: %d" % icons)
+    rebuild_menu()
+    log("done")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as exc:                      # noqa: BLE001
+        # A silent crash here means games quietly stop being added, and the
+        # only trace is a journal entry nobody reads.
+        log("sync failed: %s: %s" % (type(exc).__name__, exc))
+        tell_kodi("Game sync failed", "%s: %s" % (type(exc).__name__, exc))
+        raise

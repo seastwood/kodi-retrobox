@@ -1,0 +1,9 @@
+[Unit]
+Description=Sync RetroArch playlists, box art and the Kodi menu with ROMs on disk
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/retro/.local/bin/sync_games.py
+# Scanning is CPU-heavy on this machine; stay out of the way of anything playing.
+Nice=10
+IOSchedulingClass=idle
