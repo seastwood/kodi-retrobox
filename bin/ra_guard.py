@@ -28,8 +28,12 @@ SAFE = {
     "input_joypad_driver": ({"udev", "sdl2", "linuxraw"}, "udev"),
     "menu_driver": ({"ozone", "xmb", "rgui", "glui"}, "ozone"),
 }
-# A real config is ~110 KB. Anything tiny is a truncated write, not a config.
-MIN_BYTES = 20000
+# A truncated write, as opposed to a small but perfectly good config. Counting
+# settings rather than bytes: a freshly installed machine has only the settings
+# install.sh applied -- 26 of them, under a kilobyte -- and RetroArch does not
+# write its full ~110 KB config until it has run once. Judging that by size
+# called a healthy new machine broken.
+MIN_SETTINGS = 10
 
 
 def read_cfg(path):
@@ -80,17 +84,22 @@ def repair(bad, good_values):
     return fixes
 
 
+def settings_count(path):
+    values = read_cfg(path)
+    return 0 if values is None else len(values)
+
+
 def main():
     os.makedirs(os.path.dirname(GOOD), exist_ok=True)
-    size = os.path.getsize(CFG) if os.path.exists(CFG) else 0
+    count = settings_count(CFG) if os.path.exists(CFG) else 0
 
     # A truncated or missing config cannot be repaired key by key.
-    if size < MIN_BYTES:
-        if os.path.exists(GOOD) and os.path.getsize(GOOD) >= MIN_BYTES:
+    if count < MIN_SETTINGS:
+        if os.path.exists(GOOD) and settings_count(GOOD) >= MIN_SETTINGS:
             shutil.copy2(GOOD, CFG)
-            print("restored the whole config: it was %d bytes" % size)
+            print("restored the whole config: it had %d settings" % count)
             return 0
-        print("config is %d bytes and there is no known-good copy" % size,
+        print("config has %d settings and there is no known-good copy" % count,
               file=sys.stderr)
         return 1
 

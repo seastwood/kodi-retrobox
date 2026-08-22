@@ -57,11 +57,11 @@ check(g.faults(None) != [], "an unreadable config is a fault")
 
 print("-- repairing touches the broken keys and nothing else --")
 tmp = tempfile.mkdtemp(prefix="guard_")
-real = (g.CFG, g.GOOD, g.MIN_BYTES)
+real = (g.CFG, g.GOOD, g.MIN_SETTINGS)
 try:
     g.CFG = os.path.join(tmp, "retroarch.cfg")
     g.GOOD = os.path.join(tmp, "known-good")
-    g.MIN_BYTES = 10
+    g.MIN_SETTINGS = 3
 
     open(g.CFG, "w").write(SANE)
     check(g.main() == 0, "a healthy config passes")
@@ -80,6 +80,7 @@ try:
           "and an unrelated setting was not touched")
 
     print("-- a truncated config is replaced outright --")
+    # Half a line and nothing else: no complete setting survives.
     open(g.CFG, "w").write("video_dri")
     g.main()
     check(g.read_cfg(g.CFG)["input_joypad_driver"] == "udev",
@@ -90,7 +91,7 @@ try:
     open(g.CFG, "w").write("x")
     check(g.main() == 1, "a truncated config and no backup is an error")
 finally:
-    g.CFG, g.GOOD, g.MIN_BYTES = real
+    g.CFG, g.GOOD, g.MIN_SETTINGS = real
     shutil.rmtree(tmp)
 
 print("-- deciding whether the picker is worth showing --")
