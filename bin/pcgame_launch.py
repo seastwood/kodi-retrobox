@@ -132,6 +132,7 @@ DEFAULT_JSM = "/home/retro/.config/JoyShockMapper/games/_default.txt"
 _RUNTIME = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
 JSM_FIFO = os.path.join(_RUNTIME, "jsm.cmd")
 JSM_LOG = os.path.join(_RUNTIME, "jsm.log")
+HUD_LOG = os.path.join(_RUNTIME, "jsm-hud.log")
 
 
 def start_jsm(config):
@@ -294,10 +295,14 @@ def start_hud(config):
     env = dict(os.environ)
     env.setdefault("DISPLAY", ":0")
     try:
+        # Its output goes to a file rather than /dev/null: the HUD failing to
+        # import a module is silent otherwise, and the only symptom is a game
+        # with no on-screen controls reference and no explanation anywhere.
+        errors = open(HUD_LOG, "w")
         return subprocess.Popen(
             [HUD_BIN, "--config", config, "--fifo", JSM_FIFO,
              "--log", JSM_LOG],
-            env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            env=env, stdout=errors, stderr=subprocess.STDOUT,
             start_new_session=True)
     except OSError:
         return None

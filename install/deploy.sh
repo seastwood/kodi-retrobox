@@ -30,6 +30,10 @@ done
 for a in "$R"/addons/*; do
   link "$a" "$HOME/.kodi/addons/$(basename "$a")"
 done
+for l in "$R"/lib/*; do
+  # Shared python the HUD and the Kodi controller editor both import.
+  [ -e "$l" ] && link "$l" "$HOME/.local/lib/$(basename "$l")"
+done
 link "$R/tests" "$HOME/.local/share/gametests"
 mkdir -p "$HOME/.config/systemd/user"
 for u in "$R"/system/systemd/*; do
