@@ -95,15 +95,20 @@ if [ ! -f "$RULE" ] && [ -f "$REPO/system/udev/50-joyshockmapper.rules" ]; then
     echo "         to create its virtual device until it is there"
   fi
 fi
-# uinput is a module, and is not loaded on a machine that has never needed it.
-if ! lsmod 2>/dev/null | grep -q "^uinput"; then
-  sudo modprobe uinput 2>/dev/null && ok "loaded the uinput module"
-  echo uinput | sudo tee /etc/modules-load.d/uinput.conf >/dev/null 2>&1 &&
-    ok "and it will load at boot"
+# uinput may be a module or built into the kernel, so ask whether the device
+# exists rather than whether a module is loaded.
+if [ ! -e /dev/uinput ]; then
+  sudo modprobe uinput 2>/dev/null
+  echo uinput | sudo tee /etc/modules-load.d/uinput.conf >/dev/null 2>&1
+  [ -e /dev/uinput ] && ok "loaded uinput, and it will load at boot" ||
+    warn "no /dev/uinput; JoyShockMapper cannot create its virtual device"
 fi
+# TAG+="uaccess" gives whoever is logged in at the seat access straight away;
+# the group is the fallback for anything not running in that session.
 if ! id -nG | tr " " "\n" | grep -qx input; then
   sudo usermod -aG input "$USER" 2>/dev/null &&
-    warn "added you to the 'input' group -- log out and back in for it to apply"
+    ok "added you to the 'input' group (applies at next login; the udev rule"
+  echo "         already grants access for this session)"
 fi
 
 # The ready-made mappings.
