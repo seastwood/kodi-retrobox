@@ -1,0 +1,14 @@
+# Third-party Kodi add-ons this console's look depends on, fetched from
+# mirrors.kodi.tv. The four hand-written ones are in addons/ and symlinked into
+# place by deploy.sh; these are not ours to vendor.
+#
+# The skin is what makes it look like a console rather than a media player, and
+# skinshortcuts is what builds the game menu kodi_menu.py writes.
+skin.aeon.nox.silvo
+script.skinshortcuts
+# skinshortcuts' own dependencies
+script.module.unidecode
+script.module.simpleeval
+# the skin's
+resource.images.studios.white
+resource.images.recordlabels.white

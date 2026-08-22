@@ -10,12 +10,7 @@ state/
 local/
 backup/backup.conf
 
-# Snapshots of what happens to be installed here, as opposed to what this
-# console needs (system/packages.required.txt).
-system/packages.manual.txt
-system/uname.txt
-system/distro.txt
-system/kodi-addons.txt
-system/bios-present.txt
-system/systemd-user-units.txt
-system/retroarch-cores.txt
+# Snapshots of what happens to be installed here now go to local/, so nothing
+# under system/ needs ignoring. Leaving those rules here once silently dropped
+# system/kodi-addons.txt -- a curated list that shares a name with an old
+# capture -- out of the published repository.

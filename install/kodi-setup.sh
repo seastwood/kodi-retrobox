@@ -63,8 +63,11 @@ else
   python3 - "$DB" "$ADDONS" <<'PY'
 import os, sqlite3, sys, time
 db, addons_dir = sys.argv[1], sys.argv[2]
+# ~/.kodi/addons also holds Kodi's own "packages" and "temp" working
+# directories. An add-on is a directory with an addon.xml in it; anything else
+# put in this database is a row Kodi will never understand.
 ours = sorted(d for d in os.listdir(addons_dir)
-              if os.path.isdir(os.path.join(addons_dir, d)) and not d.startswith("."))
+              if os.path.isfile(os.path.join(addons_dir, d, "addon.xml")))
 con = sqlite3.connect(db)
 cur = con.cursor()
 now = time.strftime("%Y-%m-%d %H:%M:%S")
