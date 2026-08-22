@@ -35,14 +35,28 @@ if [ "$OLD" = "$NEW" ]; then
   exit 0
 fi
 
-files=$(grep -rl "$OLD" "$REPO" \
-        --include='*.py' --include='*.sh' --include='*.service' \
-        --include='*.timer' --include='*.desktop' --include='*.md' \
-        --include='*.json' --include='*.conf' --include='*.example' \
-        --include='*.xml' 2>/dev/null \
-        | grep -v '/\.git/')
-count=$(printf '%s\n' $files | grep -c . || true)
-hits=$(grep -rho "$OLD" $files 2>/dev/null | wc -l)
+# Every text file that mentions the old home, found by content rather than by
+# extension: jsm-hud and osk-toggle have no extension at all, and an
+# extension list silently skipped them while still reporting success.
+# -I skips binaries, so the font and the icons are left alone. system/home.txt
+# is excluded on purpose: it records what the repository is written for.
+# Every text file that mentions the old home, found by content rather than by
+# extension: jsm-hud and osk-toggle have no extension at all, and an extension
+# list silently skipped them while still reporting success. -I skips binaries,
+# so the font and the icons are left alone, and system/home.txt is excluded
+# because it records what the repository is written for.
+#
+# NUL-separated throughout: playlists are named "Sega - Mega-CD - Sega CD.lpl"
+# and an unquoted list of those splits into fragments, one of which is "-" --
+# which grep reads as "take input from stdin" and waits there for ever.
+LIST=$(mktemp)
+trap 'rm -f "$LIST"' EXIT
+grep -rlIZ "$OLD" "$REPO" \
+     --exclude-dir=.git --exclude-dir=__pycache__ --exclude=home.txt \
+     2>/dev/null > "$LIST" || true
+
+count=$(tr -cd '\0' < "$LIST" | wc -c)
+hits=$(xargs -0 -r grep -oh "$OLD" < "$LIST" 2>/dev/null | wc -l)
 
 echo "baked-in home : $OLD"
 echo "this machine  : $NEW"
@@ -50,18 +64,16 @@ echo "files         : $count"
 echo "occurrences   : $hits"
 
 if [ "$CHECK" = 1 ]; then
-  printf '%s\n' $files | sed 's|^|   |'
+  xargs -0 -r -n1 echo < "$LIST" | sed 's|^|   |'
   exit 0
 fi
 [ "$count" -eq 0 ] && { echo "nothing to do"; exit 0; }
 
-# shellcheck disable=SC2086
-sed -i "s|$OLD|$NEW|g" $files
-# /home/retro2 contains /home/retro, so a plain count of the old path finds
-# every new one too and reports a rewrite that worked as having failed.
-left=$(grep -rho "$OLD" $files 2>/dev/null | wc -l)
+xargs -0 -r sed -i "s|$OLD|$NEW|g" < "$LIST"
+
+left=$(xargs -0 -r grep -oh "$OLD" < "$LIST" 2>/dev/null | wc -l)
 case "$NEW" in
-  "$OLD"*) left=$(( left - $(grep -rho "$NEW" $files 2>/dev/null | wc -l) )) ;;
+  "$OLD"*) left=$(( left - $(xargs -0 -r grep -oh "$NEW" < "$LIST" 2>/dev/null | wc -l) )) ;;
 esac
 [ "$left" -lt 0 ] && left=0
 # system/home.txt deliberately keeps saying which home the *repository* is
@@ -73,12 +85,12 @@ echo "rewritten; $left occurrences left"
 # A syntax check on everything touched, because a bad rewrite must not be
 # discovered later by a game failing to launch.
 bad=0
-for f in $files; do
+while IFS= read -r -d '' f; do
   case "$f" in
     *.py) python3 -m py_compile "$f" 2>/dev/null || { echo "   BROKEN $f"; bad=1; } ;;
     *.sh) bash -n "$f" 2>/dev/null || { echo "   BROKEN $f"; bad=1; } ;;
   esac
-done
+done < "$LIST"
 [ "$bad" = 0 ] && echo "all rewritten files still parse" || echo "SOME FILES ARE BROKEN"
 echo
 echo "Now run install/install.sh, and commit the rewrite if it is a permanent move."
