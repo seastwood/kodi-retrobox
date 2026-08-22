@@ -130,6 +130,21 @@ else
       ok "all packages installed (individually)"
     fi
   fi
+  # linux-tools-generic follows the GA kernel line, so on an HWE or a freshly
+  # upgraded kernel /usr/bin/usbip is a wrapper pointing at nothing: it exists,
+  # it is executable, and it exits 2. The package that matters is the one named
+  # for the running kernel, which a static package list cannot express.
+  ktools="linux-tools-$(uname -r)"
+  if [ "$DRY" = 1 ]; then
+    skip "would install: $ktools"
+  elif usbip version >/dev/null 2>&1; then
+    ok "usbip works for kernel $(uname -r)"
+  elif sudo apt-get install -y "$ktools" >/dev/null 2>&1 && usbip version >/dev/null 2>&1; then
+    ok "installed $ktools so usbip runs"
+  else
+    warn "usbip does not run for kernel $(uname -r) -- run bin/usbip-setup-root.sh"
+  fi
+
   if [ "$WITH_OPTIONAL" = 1 ]; then
     # WineHQ is a third-party repository, so it is only added on request.
     run "sudo mkdir -pm755 /etc/apt/keyrings"

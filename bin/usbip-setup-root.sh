@@ -2,10 +2,18 @@
 # One-off root setup for the USB/IP client side on this machine.
 # Run once:   sudo ~/.local/bin/usbip-setup-root.sh
 #
-# Three things, none of which the Kodi add-on can do for itself:
-#   1. load vhci-hcd now, and on every boot
-#   2. let the retro user run just the usbip binary without a password
-#   3. sanity-check that the tools are actually present
+# Four things, none of which the Kodi add-on can do for itself:
+#   1. install the usbip tools -- for the *running* kernel, see below
+#   2. load vhci-hcd now, and on every boot
+#   3. let the user run just the usbip binary without a password
+#   4. prove it works by running usbip, rather than by finding the file
+#
+# The trap this exists to avoid: /usr/bin/usbip is only a wrapper script, from
+# linux-tools-common. It execs /usr/lib/linux-tools/$(uname -r)/usbip and, when
+# that is missing, prints a warning and exits 2. So the command can be present
+# and executable and still not work. linux-tools-generic follows the GA kernel
+# line, which is not necessarily the kernel you booted -- an HWE or a freshly
+# upgraded kernel leaves the wrapper pointing at nothing.
 set -euo pipefail
 
 if [ "$EUID" -ne 0 ]; then
@@ -13,25 +21,99 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-USER_NAME="${SUDO_USER:-retro}"
-USBIP_BIN="$(command -v usbip || echo /usr/bin/usbip)"
+ASSUME_YES=0
+for arg in "$@"; do
+    case "$arg" in
+        -y|--yes) ASSUME_YES=1 ;;
+        -h|--help)
+            echo "usage: sudo $0 [-y]"
+            echo "  -y, --yes   install packages without asking"
+            exit 0 ;;
+        *) echo "unknown option: $arg" >&2; exit 1 ;;
+    esac
+done
 
-echo "== usbip binary =="
-if [ ! -x "$USBIP_BIN" ]; then
-    echo "usbip not found. Install it with:" >&2
-    echo "  apt install linux-tools-generic linux-tools-\$(uname -r)" >&2
-    exit 1
+USER_NAME="${SUDO_USER:-retro}"
+KERNEL="$(uname -r)"
+USBIP_BIN=/usr/bin/usbip
+
+# The only honest test: run it.
+usbip_works() {
+    [ -x "$USBIP_BIN" ] && "$USBIP_BIN" version >/dev/null 2>&1
+}
+
+confirm() {
+    [ "$ASSUME_YES" = 1 ] && return 0
+    [ -t 0 ] || return 0          # non-interactive: they already typed sudo
+    local reply
+    read -r -p "  install $1? [Y/n] " reply || reply=y
+    case "$reply" in [Nn]*) return 1 ;; *) return 0 ;; esac
+}
+
+apt_install() {
+    DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
+}
+
+echo "== usbip tools =="
+if usbip_works; then
+    echo "  $USBIP_BIN ($("$USBIP_BIN" version 2>&1)) for kernel $KERNEL"
+else
+    if [ -x "$USBIP_BIN" ]; then
+        echo "  $USBIP_BIN is present but will not run:"
+        "$USBIP_BIN" version 2>&1 | sed "s/^/    /" || true
+    else
+        echo "  usbip is not installed"
+    fi
+
+    # linux-tools-common ships the wrapper, linux-tools-$KERNEL the real binary.
+    WANT="linux-tools-common linux-tools-$KERNEL"
+    if ! apt-cache show "linux-tools-$KERNEL" >/dev/null 2>&1; then
+        echo "  apt does not know linux-tools-$KERNEL yet; refreshing lists"
+        apt-get update -qq || true
+    fi
+    if ! apt-cache show "linux-tools-$KERNEL" >/dev/null 2>&1; then
+        # A mainline or out-of-archive kernel has no matching tools package.
+        echo "  no linux-tools-$KERNEL in the archive; trying linux-tools-generic"
+        WANT="linux-tools-common linux-tools-generic"
+    fi
+
+    if ! confirm "$WANT"; then
+        echo "  declined -- usbip cannot work without it" >&2
+        exit 1
+    fi
+    apt_install $WANT || echo "  apt could not install: $WANT" >&2
+
+    if ! usbip_works; then
+        echo >&2
+        echo "  usbip still does not run for kernel $KERNEL:" >&2
+        "$USBIP_BIN" version 2>&1 | sed "s/^/    /" >&2 || true
+        echo "  If the kernel was upgraded recently, reboot and run this again." >&2
+        exit 1
+    fi
+    echo "  now working: $("$USBIP_BIN" version 2>&1)"
 fi
-echo "  $USBIP_BIN  ($("$USBIP_BIN" version 2>&1))"
+
+echo "== ssh client =="
+# The add-on drives the Pi over ssh; a minimal install may not have it.
+if command -v ssh >/dev/null 2>&1; then
+    echo "  present"
+elif confirm "openssh-client" && apt_install openssh-client; then
+    echo "  installed"
+else
+    echo "  WARNING: no ssh client, the Pi side cannot be controlled" >&2
+fi
 
 echo "== vhci-hcd module =="
 # vhci-hcd is the client half of USB/IP: it presents the remote device as a
 # local virtual USB port. usbip_host is the server half and is not needed here.
-if lsmod | grep -q '^vhci_hcd'; then
+if grep -q "^vhci_hcd" /proc/modules; then
     echo "  already loaded"
-else
-    modprobe vhci-hcd
+elif modprobe vhci-hcd 2>/dev/null; then
     echo "  loaded"
+else
+    echo "  could not load vhci-hcd." >&2
+    echo "  It ships in linux-modules-$KERNEL -- check that package is installed." >&2
+    exit 1
 fi
 
 echo "== load on boot =="

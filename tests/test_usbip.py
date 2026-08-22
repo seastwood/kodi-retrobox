@@ -96,5 +96,49 @@ wire(ssh_result=(1, "", "no such device"))
 check(U.unexport("192.0.2.10", "piuser", "1-1.3") is not None,
       "but a real failure is reported")
 
+print("\n-- usbip that exists but cannot run is not a sudo problem --")
+# /usr/bin/usbip is only a wrapper script from linux-tools-common. Without the
+# tools for the running kernel it prints a warning and exits 2 -- so it passes
+# every "is it installed" test and still does nothing. That used to surface as
+# "sudo usbip needs a password", sending people to fix the wrong thing.
+real_run, real_exists = U.run, U.os.path.exists
+
+
+def fake_env(present=True, version_rc=0, sudo_rc=0, key=True):
+    U.os.path.exists = lambda path: (
+        present if path == U.USBIP else key if path == U.SSH_KEY else False)
+
+    def fake_run(cmd, timeout=None):
+        if cmd[:2] == [U.USBIP, "version"]:
+            return (version_rc, "", "")
+        return (sudo_rc, "", "")
+
+    U.run = fake_run
+
+
+try:
+    fake_env(version_rc=2)
+    usable, problem = U.usbip_usable()
+    check(not usable, "a wrapper that exits 2 counts as unusable")
+    check("kernel" in problem,
+          "and the kernel is named as the reason, got %r" % problem)
+    check(not any("password" in p for p in U.check_client()),
+          "sudo is not blamed for it, got %r" % U.check_client())
+
+    fake_env(present=False)
+    usable, problem = U.usbip_usable()
+    check(not usable and "not installed" in problem,
+          "a missing usbip still reads as missing, got %r" % problem)
+
+    fake_env()
+    check(U.usbip_usable() == (True, None), "a working usbip is usable")
+    check(U.check_client() == [], "and a working client reports nothing")
+
+    fake_env(sudo_rc=1)
+    check(any("password" in p for p in U.check_client()),
+          "a genuine sudo failure is still reported")
+finally:
+    U.run, U.os.path.exists = real_run, real_exists
+
 print("\nFAILURES: %d" % len(fails))
 sys.exit(1 if fails else 0)

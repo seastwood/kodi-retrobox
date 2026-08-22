@@ -132,18 +132,38 @@ def have_key():
     return os.path.exists(SSH_KEY)
 
 
+def usbip_usable():
+    """(ok, problem). Whether usbip can actually run, not whether it exists.
+
+    /usr/bin/usbip is only a wrapper script from linux-tools-common; it execs
+    /usr/lib/linux-tools/$(uname -r)/usbip and exits 2 when the tools for the
+    running kernel are absent. So the file being there proves nothing, and the
+    failure looks exactly like a sudo problem unless it is told apart here.
+    """
+    if not os.path.exists(USBIP):
+        return False, "usbip is not installed -- run usbip-setup-root.sh"
+    rc, _out, _err = run([USBIP, "version"], timeout=10)
+    if rc != 0:
+        return False, ("usbip is installed but not for kernel %s -- "
+                       "run usbip-setup-root.sh" % os.uname()[2])
+    return True, None
+
+
 def check_client():
     """What is missing on this side, as a list of human-readable problems."""
     problems = []
-    if not os.path.exists(USBIP):
-        problems.append("usbip is not installed")
+    runs, problem = usbip_usable()
+    if not runs:
+        problems.append(problem)
     if not have_key():
         problems.append("no ssh key at %s" % SSH_KEY)
-    rc, _out, _err = run(["sudo", "-n", USBIP, "port"], timeout=10)
-    if rc == 127:
-        problems.append("usbip could not be run at all")
-    elif rc != 0:
-        problems.append("sudo usbip needs a password -- run usbip-setup-root.sh")
+    # Only meaningful once the binary itself works, or every broken install
+    # gets blamed on sudo.
+    if runs:
+        rc, _out, _err = run(["sudo", "-n", USBIP, "port"], timeout=10)
+        if rc != 0:
+            problems.append(
+                "sudo usbip needs a password -- run usbip-setup-root.sh")
     try:
         with open("/proc/modules") as handle:
             if "vhci_hcd" not in handle.read():

@@ -31,7 +31,11 @@ onboard
 # Bluetooth pairing (script.bluetooth)
 bluez
 
-# USB over IP (script.usbip); usbip lives in linux-tools
+# USB over IP (script.usbip); usbip lives in linux-tools.
+# These two are not enough on their own: linux-tools-common ships only a
+# wrapper script and linux-tools-generic tracks the GA kernel, so the binary
+# for the kernel you booted may still be missing. install.sh adds
+# linux-tools-$(uname -r) as well, and bin/usbip-setup-root.sh checks it.
 linux-tools-common
 linux-tools-generic
 

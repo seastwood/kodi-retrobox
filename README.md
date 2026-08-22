@@ -101,6 +101,31 @@ game runs and unloaded afterwards. It is built from source by
 mappings are installed with it. The CONTROLLER entry on the Kodi home menu
 edits them with a controller, so that needs no keyboard either.
 
+### USB over IP
+
+The USB DEVICES entry borrows a controller plugged into another machine (a Pi,
+say) over the network, so a pad in another room shows up here as a local USB
+device. Everything the add-on does needs root, which it cannot arrange for
+itself, so run this once:
+
+    sudo ~/retro-console/bin/usbip-setup-root.sh
+
+It installs the tools, loads `vhci-hcd` and makes that permanent, and grants
+the user passwordless sudo for the `usbip` binary alone. Re-running it is
+harmless.
+
+One thing worth knowing, because it is invisible: `/usr/bin/usbip` is only a
+wrapper script from `linux-tools-common`. It execs
+`/usr/lib/linux-tools/$(uname -r)/usbip`, and when that is missing it exits 2 --
+so `usbip` can be installed, present and executable, and still do nothing.
+`linux-tools-generic` follows the GA kernel line, which is not necessarily the
+kernel you booted, so an HWE kernel or one upgraded since the last reboot lands
+exactly there. The setup script tests by running `usbip`, not by looking for
+the file, and installs `linux-tools-$(uname -r)` when it has to.
+
+The other end still needs `usbipd` running and passwordless sudo for `usbip`,
+plus the key printed at the end of the setup script.
+
 ### adopt.sh
 
 Absolute paths are baked into the code — it was written on a machine whose user
