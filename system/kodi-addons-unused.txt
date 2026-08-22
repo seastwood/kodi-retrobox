@@ -1,13 +1,15 @@
 # Add-ons registered as disabled rather than enabled.
 #
-# Kodi asks about every add-on it finds that its database has not seen, which
-# on a fresh machine is all 135 it ships with. kodi-setup.sh registers them all
-# so nothing is ever asked; the ones listed here are registered switched off
-# because a games console has no use for them.
+# EMPTY ON PURPOSE. Kodi asks "Would you like to enable this add-on?" about a
+# DISABLED add-on that something still references -- so switching one off is
+# what causes the prompt, not what prevents it. Disabling the spectrum
+# visualiser produced exactly the dialog it was meant to remove.
 #
-# visualization.spectrum is the animated bars shown while music plays. It is a
-# Recommends of the kodi package, so apt installs it whether or not you want it.
-visualization.spectrum
-# Only used for ripping audio CDs.
-audioencoder.kodi.builtin.aac
-audioencoder.kodi.builtin.wma
+# Everything Kodi ships is therefore registered enabled, which is also what the
+# original machine does and what never prompts there. visualization.spectrum is
+# a music visualiser and a Recommends of the kodi package: unused by a games
+# console, harmless, and about 100 KB.
+#
+# To genuinely switch something off, disable it here AND remove whatever refers
+# to it (for the visualiser, set Settings > Player > Music > Visualisation to
+# None), or the dialog comes back.
