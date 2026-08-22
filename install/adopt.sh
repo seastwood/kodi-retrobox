@@ -55,7 +55,13 @@ fi
 
 # shellcheck disable=SC2086
 sed -i "s|$OLD|$NEW|g" $files
+# /home/retro2 contains /home/retro, so a plain count of the old path finds
+# every new one too and reports a rewrite that worked as having failed.
 left=$(grep -rho "$OLD" $files 2>/dev/null | wc -l)
+case "$NEW" in
+  "$OLD"*) left=$(( left - $(grep -rho "$NEW" $files 2>/dev/null | wc -l) )) ;;
+esac
+[ "$left" -lt 0 ] && left=0
 printf '%s\n' "$NEW" > "$REPO/system/home.txt"
 echo "rewritten; $left occurrences left"
 

@@ -23,6 +23,8 @@ link() {   # link <repo path> <live path>
 }
 
 for f in "$R"/bin/*; do
+  # adopt.sh byte-compiles what it rewrites, which leaves a __pycache__ behind.
+  case "$(basename "$f")" in __pycache__|*.pyc) continue ;; esac
   link "$f" "$HOME/.local/bin/$(basename "$f")"
 done
 for a in "$R"/addons/*; do

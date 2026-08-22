@@ -83,20 +83,43 @@ else
   if [ "$(id -u)" != 0 ] && ! sudo -n true 2>/dev/null; then
     warn "this phase needs sudo; you will be prompted"
   fi
-  # The libretro PPA carries RetroArch and the cores.
-  while read -r ppa; do
-    [ -n "$ppa" ] || continue
-    short="${ppa#ppa.launchpadcontent.net/}"; short="${short%/*}"
-    if ls /etc/apt/sources.list.d/ 2>/dev/null | grep -qi "${short%%/*}"; then
-      skip "PPA already present: $short"
+  # The libretro PPA carries RetroArch and the cores. The captured line looks
+  # like "ppa.launchpadcontent.net/libretro/stable" and what add-apt-repository
+  # wants is "ppa:libretro/stable" -- owner AND name, so only the host comes off.
+  while read -r line; do
+    [ -n "$line" ] || continue
+    case "$line" in \#*) continue ;; esac
+    name="${line#ppa.launchpadcontent.net/}"
+    name="${name%/ubuntu}"; name="${name%/}"
+    case "$name" in */*) : ;; *) warn "cannot parse PPA: $line"; continue ;; esac
+    if grep -rqs "launchpadcontent.net/${name}" /etc/apt/sources.list.d/ 2>/dev/null; then
+      skip "PPA already present: $name"
     else
-      run "sudo add-apt-repository -y ppa:$short"
+      run "sudo add-apt-repository -y ppa:$name" || warn "could not add ppa:$name"
     fi
-  done < <(sed 's#^ppa.launchpadcontent.net/##; s#/ubuntu$##' "$REPO/system/ppas.txt" 2>/dev/null \
-           | sed 's#/$##' | awk 'NF')
+  done < "$REPO/system/ppas.txt"
   run "sudo apt-get update -qq"
   pkgs=$(grep -vE '^\s*(#|$)' "$REPO/system/packages.required.txt" | tr '\n' ' ')
-  run "sudo apt-get install -y $pkgs"
+  # One unavailable package makes apt refuse the whole list, so a single bad
+  # name used to leave the machine with nothing installed while this said "ok".
+  # Try the lot, and if that fails install them one at a time so the report
+  # names exactly which ones could not be had.
+  if [ "$DRY" = 1 ]; then
+    skip "would install: $pkgs"
+  elif sudo apt-get install -y $pkgs; then
+    ok "all $(printf '%s\n' $pkgs | wc -l) packages installed"
+  else
+    warn "installing together failed; trying them one at a time"
+    missing=""
+    for p in $pkgs; do
+      sudo apt-get install -y "$p" >/dev/null 2>&1 || missing="$missing $p"
+    done
+    if [ -n "$missing" ]; then
+      bad "could not install:$missing"
+    else
+      ok "all packages installed (individually)"
+    fi
+  fi
   if [ "$WITH_OPTIONAL" = 1 ]; then
     # WineHQ is a third-party repository, so it is only added on request.
     run "sudo mkdir -pm755 /etc/apt/keyrings"
@@ -105,9 +128,9 @@ else
     run "sudo dpkg --add-architecture i386"
     run "sudo apt-get update -qq"
     opt=$(grep -vE '^\s*(#|$)' "$REPO/system/packages.optional.txt" | tr '\n' ' ')
-    run "sudo apt-get install -y --install-recommends $opt"
+    run "sudo apt-get install -y --install-recommends $opt" ||
+      warn "the optional Wine packages could not be installed"
   fi
-  ok "packages requested"
 fi
 
 # ------------------------------------------------------------- directories --
