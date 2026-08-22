@@ -168,6 +168,13 @@ if [ -f "$REPO/assets/fonts/PressStart2P.ttf" ]; then
 else
   warn "no font in the repo; the picker will fall back to a default face"
 fi
+if [ -d "$REPO/assets/backgrounds" ]; then
+  run "mkdir -p '$TARGET_HOME/.kodi/media/backgrounds'"
+  for b in "$REPO"/assets/backgrounds/*.png; do
+    [ -e "$b" ] && copy_new "$b" "$TARGET_HOME/.kodi/media/backgrounds/$(basename "$b")"
+  done
+  ok "menu background in place"
+fi
 if [ -d "$REPO/assets/icons" ]; then
   for i in "$REPO"/assets/icons/*.png; do
     [ -e "$i" ] && copy_new "$i" "$TARGET_HOME/.kodi/media/consoles/$(basename "$i")"

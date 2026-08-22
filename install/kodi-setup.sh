@@ -122,6 +122,46 @@ for c in changed:
 PY
 fi
 
+# ------------------------------------------------------- skin settings -------
+say "Skin settings"
+SKIN_CONF="$REPO/templates/skin-settings.conf"
+SKIN_DATA="$KODI/userdata/addon_data/$SKIN"
+if [ ! -f "$SKIN_CONF" ]; then
+  skip "no skin settings template"
+else
+  mkdir -p "$SKIN_DATA"
+  python3 - "$SKIN_DATA/settings.xml" "$SKIN_CONF" <<'PY'
+import os, re, sys
+path, conf = sys.argv[1], sys.argv[2]
+try:
+    text = open(path, encoding="utf-8", errors="replace").read()
+except OSError:
+    text = '<settings version="2">\n</settings>\n'
+if "</settings>" not in text:
+    text = '<settings version="2">\n</settings>\n'
+changed = []
+for line in open(conf, encoding="utf-8"):
+    line = line.strip()
+    if not line or line.startswith("#") or line.count("|") != 2:
+        continue
+    key, kind, value = line.split("|")
+    pattern = r'<setting id="%s"[^>]*>[^<]*</setting>' % re.escape(key)
+    new = '<setting id="%s" type="%s">%s</setting>' % (key, kind, value)
+    if re.search(pattern, text):
+        if new not in text:
+            text = re.sub(pattern, new, text)
+            changed.append(key)
+    else:
+        text = text.replace("</settings>", "    %s\n</settings>" % new)
+        changed.append(key)
+open(path, "w", encoding="utf-8").write(text)
+print("   ok    %d skin settings applied" % len(changed) if changed
+      else "   --    skin settings already applied")
+for c in changed:
+    print("           %s" % c)
+PY
+fi
+
 say "Next"
 cat <<'EOF2'
    Start Kodi. It should come up in the console skin with your games on the
