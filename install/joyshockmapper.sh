@@ -20,7 +20,7 @@ warn() { printf '   WARN  %s\n' "$*"; }
 if [ -x "$LIB/JoyShockMapper" ]; then
   skip "JoyShockMapper is already built"
 else
-  for tool in cmake g++ git pkg-config; do
+  for tool in cmake clang++ git pkg-config; do
     command -v "$tool" >/dev/null || { warn "$tool is missing; run install.sh --with-optional first"; exit 1; }
   done
   for mod in gtk+-3.0 ayatana-appindicator3-0.1 libevdev hidapi-hidraw; do
@@ -44,7 +44,12 @@ else
       skip "patches already applied (or do not fit this revision)"
     fi
   fi
-  if ! cmake -S . -B build -DCMAKE_BUILD_TYPE=Release >/tmp/jsm-cmake.log 2>&1; then
+  # Exactly what the original working build used: clang, RelWithDebInfo, and a
+  # raised bracket depth (a clang-only flag) for the deeply nested macros.
+  if ! cmake -S . -B build \
+       -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+       -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+       -DCMAKE_CXX_FLAGS=-fbracket-depth=2048 >/tmp/jsm-cmake.log 2>&1; then
     warn "cmake failed:"
     grep -iE "error|not found|required" /tmp/jsm-cmake.log | head -6 | sed 's/^/         /'
     echo "         full output in /tmp/jsm-cmake.log"

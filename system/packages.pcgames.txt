@@ -10,8 +10,12 @@ winetricks
 
 # Building JoyShockMapper
 cmake
-g++
 make
+# clang, not g++: JoyShockMapper specialises templates inside a class, which
+# GCC 13 rejects outright and clang accepts. The original build used clang and
+# nothing recorded that except a CMake cache.
+clang
+g++
 pkg-config
 libgtk-3-dev
 libayatana-appindicator3-dev
