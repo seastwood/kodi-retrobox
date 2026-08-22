@@ -140,6 +140,7 @@ for d in \
   "$CORES_DIR" "$SHADER_DIR" \
   "$TARGET_HOME/.local/share/retroarch/system" \
   "$TARGET_HOME/.local/share/retroarch/plists" \
+  "$TARGET_HOME/.local/share/retroarch/plists/builtin" \
   "$TARGET_HOME/.local/share/retroarch/thumbnails" \
   "$TARGET_HOME/.local/state/retroarch/plists" \
   "$TARGET_HOME/.config/retroarch" \
@@ -150,6 +151,18 @@ for d in \
   "$TARGET_HOME/Games/emulation" ; do
   run "mkdir -p '$d'"
 done
+# RetroArch identifies games against the libretro databases, which the
+# retroarch-data package installs system-wide. content_database_path points
+# here, so this is what makes scanning work at all.
+RDB_LINK="$TARGET_HOME/.local/share/retroarch/rdb"
+if [ -e "$RDB_LINK" ]; then
+  skip "game database already linked"
+elif [ -d /usr/share/libretro/database/rdb ]; then
+  run "ln -s /usr/share/libretro/database/rdb '$RDB_LINK'"
+  ok "game database linked ($(ls /usr/share/libretro/database/rdb/*.rdb 2>/dev/null | wc -l) systems)"
+else
+  warn "no libretro database found; scanning will not identify anything"
+fi
 ok "layout created under $TARGET_HOME"
 
 # ------------------------------------------------------------------ deploy --
