@@ -1,0 +1,15 @@
+# Battlefield 2.  Layout: GyroConfigs/_base_fps.txt
+# dpad-right = Q is BF2's commo rose (spot), which lines up nicely.
+GyroConfigs/_base_fps.txt
+
+N  = C             # crouch
+LEFT = Z           # prone
+L  = LSHIFT        # sprint
+R  = E             # enter / exit vehicle
+L3 = G             # grenade
+R3 = MMOUSE
+
+# --- desktop layer ---------------------------------------------------------
+# Press - and + together to swap to a cursor-driven desktop layout;
+# press + on its own to come back here.
+-++ = "layers/bf2_desktop.txt"

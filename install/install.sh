@@ -127,7 +127,7 @@ else
     run "sudo curl -fsSL -o /etc/apt/sources.list.d/winehq-${CODENAME}.sources https://dl.winehq.org/wine-builds/ubuntu/dists/${CODENAME}/winehq-${CODENAME}.sources"
     run "sudo dpkg --add-architecture i386"
     run "sudo apt-get update -qq"
-    opt=$(grep -vE '^\s*(#|$)' "$REPO/system/packages.optional.txt" | tr '\n' ' ')
+    opt=$(grep -vE '^\s*(#|$)' "$REPO/system/packages.pcgames.txt" | tr '\n' ' ')
     run "sudo apt-get install -y --install-recommends $opt" ||
       warn "the optional Wine packages could not be installed"
   fi
@@ -261,15 +261,26 @@ if [ "$DRY" = 1 ]; then
   skip "would create the ROM folders under $GAMES"
 else
   made=0
-  while read -r folder; do
+  # One folder per system RetroArch can both identify and run -- 124 of them,
+  # empty and waiting, so there is never a question about where something goes.
+  while IFS=$'\t' read -r folder system core; do
     case "$folder" in ''|'#'*) continue ;; esac
     [ -d "$GAMES/$folder" ] || { mkdir -p "$GAMES/$folder"; made=$((made+1)); }
-  done < "$REPO/system/rom-folders.txt"
+  done < "$REPO/system/systems.tsv"
   copy_new "$REPO/templates/games-README.txt" "$GAMES/README.txt"
   # A signpost from the repository, so the answer to "where do games go" is
   # visible from the place people will be looking.
   [ -e "$REPO/games" ] || ln -s "$GAMES" "$REPO/games"
+  mkdir -p "$TARGET_HOME/Games/pc"
+  copy_new "$REPO/templates/pc-README.txt" "$TARGET_HOME/Games/pc/README.txt"
+  copy_new "$REPO/templates/pcgames.json" "$TARGET_HOME/.local/share/pcgames.json"
+  # Where BIOS files go, said in the folder they go in.
+  copy_new "$REPO/templates/bios-README.txt" \
+           "$TARGET_HOME/.local/share/retroarch/system/README.txt"
+  [ -e "$REPO/games" ] || ln -s "$GAMES" "$REPO/games"
   ok "$GAMES ($made folders created; see its README.txt)"
+  ok "$TARGET_HOME/Games/pc for PC games, and BIOS files go in"
+  ok "  $TARGET_HOME/.local/share/retroarch/system (see the README in it)"
 fi
 
 # ------------------------------------------------------------------- cores --
@@ -329,6 +340,18 @@ else
   done
 fi
 
+# --------------------------------------------------------------- pc games ---
+if [ "$WITH_OPTIONAL" = 1 ]; then
+  say "PC games"
+  if [ "$DRY" = 1 ]; then
+    skip "would build JoyShockMapper"
+  elif [ -x "$HERE/joyshockmapper.sh" ]; then
+    "$HERE/joyshockmapper.sh" 2>&1 | sed 's/^/  /'
+  else
+    warn "joyshockmapper.sh is missing"
+  fi
+fi
+
 # -------------------------------------------------------------------- kodi --
 say "Kodi"
 if [ "$DRY" = 1 ]; then
@@ -379,8 +402,19 @@ cat <<'EOF'
       menu within ten minutes, with box art and player counts, or immediately
       if you run ~/.local/bin/sync_games.py.
 
-   That is all. Achievements are switched on but have no account -- add yours
-   in RetroArch's own menu. Backups do nothing until you name a destination in
+   That is all for the consoles. There is a folder for every system RetroArch
+   can run; the emulator core for one arrives the first time you put a game
+   for it in.
+
+   BIOS files go in ~/.local/share/retroarch/system/ -- there is a README in
+   there, and system/bios-required.txt lists which systems need what.
+
+   For Windows and native PC games, run install.sh --with-optional: that adds
+   Wine and builds JoyShockMapper, and games are declared in
+   ~/.local/share/pcgames.json (which explains itself).
+
+   Achievements are switched on but have no account -- add yours in RetroArch's
+   own menu. Backups do nothing until you name a destination in
    backup/backup.conf.
 EOF
 

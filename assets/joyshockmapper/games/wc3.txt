@@ -1,0 +1,16 @@
+# Warcraft III.  Layout: GyroConfigs/_base_cursor.txt (arrow-key camera).
+# The ability grid is Q W E R / D F, so the free buttons map onto it:
+#   dpad-right = Q (base)   dpad-left = W   R bumper = E   Y = R (base)
+GyroConfigs/_base_cursor.txt
+
+N  = LCONTROL      # control-group modifier
+LEFT = W           # second ability
+L  = D             # ability row 2, left
+R  = E             # third ability
+L3 = F             # ability row 2, right
+R3 = MMOUSE
+
+# --- desktop layer ---------------------------------------------------------
+# Press - and + together to swap to a cursor-driven desktop layout;
+# press + on its own to come back here.
+-++ = "layers/wc3_desktop.txt"

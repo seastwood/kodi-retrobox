@@ -1,0 +1,24 @@
+# Rage of Mages 2 (GOG).  Layout: GyroConfigs/_base_cursor.txt
+GyroConfigs/_base_cursor.txt
+
+N  = LCONTROL
+LEFT = LEFT
+L  = LSHIFT
+R  = E
+L3 = F
+R3 = MMOUSE
+
+# --- desktop layer ---------------------------------------------------------
+# Press - and + together to swap to a cursor-driven desktop layout;
+# press + on its own to come back here.
+-++ = "layers/rom2_desktop.txt"
+
+# --- edited in Kodi ---
+UP = UP
+DOWN = DOWN
+RIGHT = RIGHT
+LEFT_STICK_MODE = SCROLL_WHEEL
+LUP = W
+LDOWN = S
+LLEFT = A
+LRIGHT = D

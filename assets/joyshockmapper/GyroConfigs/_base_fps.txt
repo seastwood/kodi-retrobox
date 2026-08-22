@@ -1,0 +1,122 @@
+# ============================================================================
+# _base_fps.txt - shared JoyShockMapper base for the first-person games.
+#
+# Included (not copied) by every ~/.config/JoyShockMapper/games/<id>.txt.
+# A bare path on its own line is an include; JSM resolves it relative to
+# ~/.config/JoyShockMapper/, so keep the "GyroConfigs/" prefix.
+#
+# Face-button names are POSITIONAL, not Nintendo labels: JSM sets
+# SDL_HINT_GAMECONTROLLER_USE_BUTTON_LABELS=0, so on a Switch Pro
+#   S = bottom = B      E = right = A      W = left = Y      N = top = X
+# Leave N, LEFT, L, R, L3 and R3 to the per-game file.
+# ============================================================================
+RESET_MAPPINGS
+
+# The AutoLoad watcher polls the focused X window and is redundant here --
+# pcgame_launch.py loads the config explicitly.
+AUTOLOAD = OFF
+
+# --- calibration -----------------------------------------------------------
+# REAL_WORLD_CALIBRATION is (mouse counts for a 360 degree turn) / 360, which
+# is why the desktop config uses 5.3333 -- that is 1920 / 360, one screen
+# width. 16 assumes roughly 5800 counts per turn, an ordinary FPS sensitivity.
+# It is still an estimate: calibrate per game with the in-game procedure
+# (CALCULATE_REAL_WORLD_CALIBRATION), and set IN_GAME_SENS to whatever the
+# game's own sensitivity slider is set to.
+# These games use raw mouse input, so do NOT counter the OS mouse speed.
+REAL_WORLD_CALIBRATION = 16
+IN_GAME_SENS = 1
+
+# --- left stick: WASD ------------------------------------------------------
+LEFT_STICK_MODE = NO_MOUSE
+LUP = W
+LDOWN = S
+LLEFT = A
+LRIGHT = D
+LEFT_STICK_DEADZONE_INNER = 0.15
+LEFT_STICK_DEADZONE_OUTER = 0.10
+
+# --- right stick: mouse ----------------------------------------------------
+RIGHT_STICK_MODE = AIM
+# Degrees of camera turn per second at full tilt.
+STICK_SENS = 240
+STICK_POWER = 2
+STICK_ACCELERATION_RATE = 2
+STICK_ACCELERATION_CAP = 4
+RIGHT_STICK_DEADZONE_INNER = 0.15
+RIGHT_STICK_DEADZONE_OUTER = 0.10
+
+# --- gyro: always on, B mutes it while held --------------------------------
+# GYRO_OFF names the button that DISABLES gyro for as long as it is held,
+# which is exactly "always on unless B". B stays free for other bindings.
+GYRO_OFF = S
+# GYRO_SENS 1 turns the camera by the same angle you turn the controller, so
+# aiming lives around 1-3. The 8 that used to be here is a CURSOR value -- it
+# means an eighth of a turn crosses the screen -- and belongs in
+# _base_cursor.txt, not here. Together with the old calibration it made the
+# gyro roughly 8x faster than the desktop config.
+# This is the knob to tune; it is in the Kodi editor under GYRO.
+GYRO_SENS = 1
+MOUSE_X_FROM_GYRO_AXIS = Y
+MOUSE_Y_FROM_GYRO_AXIS = X
+GYRO_SMOOTH_THRESHOLD = 5
+GYRO_CUTOFF_RECOVERY = 5
+
+# --- triggers --------------------------------------------------------------
+# RT fires, LT is the alt/aim button -- the conventional shooter layout.
+ZR = LMOUSE
+ZL = RMOUSE
+
+# --- dpad ------------------------------------------------------------------
+UP = SCROLLUP
+DOWN = SCROLLDOWN
+RIGHT = Q
+
+# --- face buttons ----------------------------------------------------------
+W = R
+E = SPACE
+
+# --- combos ----------------------------------------------------------------
+# "A+B" is a simultaneous press (both pressed within SIM_PRESS_WINDOW); "A,B"
+# is a chord (B pressed while A is held). Both override the individual
+# bindings of the buttons involved.
+#
+# CALIBRATE is the gyro calibration built into JoyShockMapper: tap to start,
+# tap again to stop, or hold it and calibration finishes the moment you let go.
+# Put the controller down on something solid first; a second or two is plenty.
+# (A fixed-duration version driven by SLEEP does not work here -- SLEEP blocks
+# the same thread that collects the gyro samples, so it would calibrate on no
+# data at all.)
+-+RIGHT = CALIBRATE
+
+# Super. LWINDOWS did not exist in the Linux build until the key was added to
+# nameToKey and mapped to KEY_LEFTMETA; see the notes in the source tree.
+-+UP = LWINDOWS
+
+# On-screen keyboard. F13 has no physical key, so nothing else can send it --
+# the XFCE shortcut on F13 runs osk-toggle, which shows or hides onboard.
+-+LEFT = F13
+
+# --- in-game gyro tuning -----------------------------------------------------
+# Hold + and tap the d-pad to change gyro sensitivity without leaving the game.
+# A quoted binding runs a JoyShockMapper console command on press, so these
+# take effect immediately -- no relaunch, and nothing is written to disk, so
+# the value here is what you get next time.
+#
+# + on its own is still TAB: a chord only overrides while the chord button is
+# held. There is no on-screen feedback, so these are by feel.
+#
+# JSM combos are at most two buttons, so a four-button chord is not expressible
+# -- holding + is the closest thing to a modifier key the pad has spare.
++,UP = "GYRO_SENS = 4"
++,RIGHT = "GYRO_SENS = 3"
++,LEFT = "GYRO_SENS = 2"
++,DOWN = "GYRO_SENS = 1"
+
+# Right stick speed, in degrees of camera turn per second at full tilt.
++,N = "STICK_SENS = 360"
++,S = "STICK_SENS = 180"
+
+# --- menus -----------------------------------------------------------------
+- = ESC
++ = TAB

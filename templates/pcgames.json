@@ -1,0 +1,26 @@
+{
+  "_comment": [
+    "Native and Wine PC games, shown in Kodi behind the PC GAMES entry.",
+    "Add one object per game to \"games\". Nothing here is scanned or guessed:",
+    "a PC game is whatever you say it is.",
+    "",
+    "  id        short name, unique, used in the Kodi URL",
+    "  name      what appears on screen",
+    "  exec      argv to run, e.g. [\"/home/you/Games/pc/quake3/quake3e.x64\"]",
+    "  cwd       working directory, if the game needs one",
+    "  env       extra environment, e.g. {\"WINEPREFIX\": \"/home/you/.wine-bf2\"}",
+    "  window    substring of the game's window title, so the launcher can",
+    "            find and focus it",
+    "  stop_kodi true if the game will not share the screen with Kodi",
+    "  jsm       a JoyShockMapper config in ~/.config/JoyShockMapper/games/,",
+    "            loaded while the game runs and unloaded afterwards",
+    "  art       a poster image for the Kodi tile",
+    "",
+    "An example, commented out by being in this list rather than in \"games\":",
+    "  {\"id\": \"quake3\", \"name\": \"Quake III Arena\",",
+    "   \"exec\": [\"/home/you/Games/pc/quake3/quake3e.x64\"],",
+    "   \"cwd\": \"/home/you/Games/pc/quake3\",",
+    "   \"window\": \"Quake\", \"jsm\": \"quake3.txt\", \"stop_kodi\": true}"
+  ],
+  "games": []
+}

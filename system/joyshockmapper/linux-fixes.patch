@@ -1,0 +1,331 @@
+diff --git a/JoyShockMapper/CMakeLists.txt b/JoyShockMapper/CMakeLists.txt
+index 540c0cf..c099951 100644
+--- a/JoyShockMapper/CMakeLists.txt
++++ b/JoyShockMapper/CMakeLists.txt
+@@ -121,6 +121,13 @@ if (LINUX)
+         src/linux/Whitelister.cpp
+ 		src/linux/Gamepad.cpp
+     )
++
++    if(SDL)
++        target_sources (
++            ${BINARY_NAME} PRIVATE
++            src/SDL2Wrapper.cpp              include/JoyShockLibrary.h
++        )
++    endif()
+ endif ()
+ 
+ target_compile_definitions (
+@@ -150,11 +157,11 @@ if(SDL)
+ 	target_link_libraries (
+ 		${BINARY_NAME} PRIVATE
+ 		Platform::Dependencies
+-		SDL2
++		SDL2::SDL2
+ 	)
+ 
+ 	install (
+-		TARGETS ${BINARY_NAME} SDL2
++		TARGETS ${BINARY_NAME}
+ 		RUNTIME DESTINATION ${PACKAGE_DIR}
+ 	)
+ else()
+diff --git a/JoyShockMapper/include/Gamepad.h b/JoyShockMapper/include/Gamepad.h
+index b69c410..8a8eed5 100644
+--- a/JoyShockMapper/include/Gamepad.h
++++ b/JoyShockMapper/include/Gamepad.h
+@@ -1,13 +1,15 @@
+ #pragma once
+ 
+ #include "JoyShockMapper.h"
++#include <memory>
+ 
+ // Forward Declare and typedefs
+ typedef struct _VIGEM_TARGET_T *PVIGEM_TARGET;
+ typedef struct _VIGEM_CLIENT_T *PVIGEM_CLIENT;
+ typedef struct _XUSB_REPORT XUSB_REPORT;
+ typedef struct _DS4_REPORT DS4_REPORT;
+-typedef enum _VIGEM_ERRORS VIGEM_ERRORS;
++enum _VIGEM_ERRORS : int;
++typedef _VIGEM_ERRORS VIGEM_ERRORS;
+ 
+ #if defined(WIN32)
+ #define VIGEM_CALLBACK _stdcall
+diff --git a/JoyShockMapper/include/InputHelpers.h b/JoyShockMapper/include/InputHelpers.h
+index 08eeab1..f7911eb 100644
+--- a/JoyShockMapper/include/InputHelpers.h
++++ b/JoyShockMapper/include/InputHelpers.h
+@@ -63,6 +63,16 @@ inline void shapedSensitivityMoveMouse(float x, float y, std::pair<float, float>
+ 	  (y * newSensitivityY) * deltaTime + extraVelocityY);
+ }
+ 
++#ifdef __linux__
++// Linux has no console input queue to inject a command into. The original
++// implementation used ioctl(TIOCSTI), which fails two ways here: stdin is a
++// pipe when JSM is launched by pcgame_launch.py, and dev.tty.legacy_tiocsti
++// defaults to 0 on modern kernels so the ioctl is refused outright. main()
++// installs a handler that feeds the command straight to the CmdRegistry
++// instead, which is what makes quoted command bindings work at all.
++extern std::function<void(in_string)> g_consoleCommandHandler;
++#endif
++
+ BOOL WriteToConsole(in_string command);
+ 
+ BOOL WINAPI ConsoleCtrlHandler(DWORD dwCtrlType);
+diff --git a/JoyShockMapper/include/JoyShockMapper.h b/JoyShockMapper/include/JoyShockMapper.h
+index 277927d..f11661c 100644
+--- a/JoyShockMapper/include/JoyShockMapper.h
++++ b/JoyShockMapper/include/JoyShockMapper.h
+@@ -5,6 +5,11 @@
+ 
+ #include <map>
+ #include <functional>
++#include <string>
++#include <sstream>
++#include <vector>
++#include <optional>
++#include <cstdint>
+ 
+ // This header file is meant to be included among all core JSM source files
+ // And as such it should contain only constants, types and functions related to them
+diff --git a/JoyShockMapper/include/PlatformDefinitions.h b/JoyShockMapper/include/PlatformDefinitions.h
+index 3feed05..77ae214 100644
+--- a/JoyShockMapper/include/PlatformDefinitions.h
++++ b/JoyShockMapper/include/PlatformDefinitions.h
+@@ -1,6 +1,10 @@
+ #pragma once
+ 
+ #include <string>
++#include <cstdint>
++#include <iostream>
++#include <sstream>
++#include <mutex>
+ 
+ #ifdef _WIN32
+ 
+@@ -42,6 +46,8 @@ extern const char *BASE_JSM_CONFIG_FOLDER();
+ 
+ #include <cassert>
+ 
++using UCHAR = unsigned char;
++
+ #define WINAPI
+ #define VK_OEM_PLUS 0xBB
+ #define VK_OEM_MINUS 0xBD
+@@ -112,6 +118,8 @@ extern const char *BASE_JSM_CONFIG_FOLDER();
+ #define VK_MBUTTON 0x04
+ #define VK_XBUTTON1 0x05
+ #define VK_XBUTTON2 0x06
++#define VK_LWIN 0x5B
++#define VK_RWIN 0x5C
+ 
+ #define U(string) string
+ #define _ASSERT_EXPR(condition, message) assert(condition)
+diff --git a/JoyShockMapper/include/linux/StatusNotifierItem.h b/JoyShockMapper/include/linux/StatusNotifierItem.h
+index ae49d6e..30e20ef 100644
+--- a/JoyShockMapper/include/linux/StatusNotifierItem.h
++++ b/JoyShockMapper/include/linux/StatusNotifierItem.h
+@@ -12,7 +12,7 @@
+ #include <list>
+ 
+ #include <gtk/gtk.h>
+-#include <libappindicator/app-indicator.h>
++#include <libayatana-appindicator/app-indicator.h>
+ 
+ class StatusNotifierItem
+ {
+diff --git a/JoyShockMapper/src/CmdRegistry.cpp b/JoyShockMapper/src/CmdRegistry.cpp
+index ed39f60..801a59b 100644
+--- a/JoyShockMapper/src/CmdRegistry.cpp
++++ b/JoyShockMapper/src/CmdRegistry.cpp
+@@ -148,7 +148,13 @@ bool CmdRegistry::findCommandWithName(in_string name, CmdMap::value_type& pair)
+ 
+ bool CmdRegistry::isCommandValid(in_string line)
+ {
++	// Same two-step resolution loadConfigFile uses, so a quoted binding may
++	// name a config relative to the JSM config folder rather than the cwd.
+ 	ifstream file(line);
++	if (!file.is_open())
++	{
++		file.open(std::string{ BASE_JSM_CONFIG_FOLDER() } + line);
++	}
+ 	if (file.is_open())
+ 	{
+ 		file.close();
+diff --git a/JoyShockMapper/src/SDL2Wrapper.cpp b/JoyShockMapper/src/SDL2Wrapper.cpp
+index 4ed5397..1bd8579 100644
+--- a/JoyShockMapper/src/SDL2Wrapper.cpp
++++ b/JoyShockMapper/src/SDL2Wrapper.cpp
+@@ -1,3 +1,4 @@
++#include <memory>
+ #include "JoyShockLibrary.h"
+ #include "JSMVariable.hpp"
+ #include "SDL.h"
+diff --git a/JoyShockMapper/src/linux/InputHelpers.cpp b/JoyShockMapper/src/linux/InputHelpers.cpp
+index 5f88bc3..86ee898 100644
+--- a/JoyShockMapper/src/linux/InputHelpers.cpp
++++ b/JoyShockMapper/src/linux/InputHelpers.cpp
+@@ -250,6 +250,10 @@ private:
+ 			return KEY_LEFTALT;
+ 		case VK_RMENU:
+ 			return KEY_RIGHTALT;
++		case VK_LWIN:
++			return KEY_LEFTMETA;
++		case VK_RWIN:
++			return KEY_RIGHTMETA;
+ 		case VK_TAB:
+ 			return KEY_TAB;
+ 		case VK_RETURN:
+@@ -515,7 +519,7 @@ int pressMouse(WORD vkKey, bool isPressed)
+ // send key press
+ int pressKey(KeyCode vkKey, bool pressed)
+ {
+-	if (vkKey == 0)
++	if (vkKey.code == 0)
+ 		return 0;
+ 	if (vkKey.code <= V_WHEEL_DOWN)
+ 	{
+@@ -558,23 +562,20 @@ void setMouseNorm(float x, float y)
+ 	mouse.mouse_move_absolute(std::roundf(65535.0f * x), std::roundf(65535.0f * y));
+ }
+ 
++std::function<void(in_string)> g_consoleCommandHandler;
++
+ bool WriteToConsole(const std::string &command)
+ {
+-	constexpr auto STDIN_FD{ 0 };
+-
+-	for (auto c : command)
++	// See the note in InputHelpers.h: TIOCSTI cannot be used here. The handler
++	// is installed by main() and runs the command through the CmdRegistry. That
++	// is off the main thread, but no more so than the AutoLoad poller, which
++	// has always called processLine from its own thread.
++	if (g_consoleCommandHandler)
+ 	{
+-		if (::ioctl(STDIN_FD, TIOCSTI, &c) < 0)
+-		{
+-			perror("ioctl");
+-			return false;
+-		}
++		g_consoleCommandHandler(command);
++		return true;
+ 	}
+-
+-	char NEW_LINE = '\n';
+-	::ioctl(STDIN_FD, TIOCSTI, &NEW_LINE);
+-
+-	return true;
++	return false;
+ }
+ 
+ BOOL ConsoleCtrlHandler(DWORD)
+@@ -583,7 +584,7 @@ BOOL ConsoleCtrlHandler(DWORD)
+ };
+ 
+ // just setting up the console with standard stuff
+-void initConsole(std::function<void()>)
++void initConsole()
+ {
+ }
+ 
+@@ -620,7 +621,10 @@ std::tuple<std::string, std::string> GetActiveWindowName()
+ 
+ 		focusedWindowExecutableName[0] = '\0';
+ 		XGetInputFocus(X11Display, &focusedWindow, &revert);
+-		if (focusedWindow > 0)
++		// None (0) and PointerRoot (1) are not real windows. Passing PointerRoot
++		// to XFetchName raises BadWindow, and Xlib's default handler kills the
++		// process -- which happens whenever no window has focus.
++		if (focusedWindow > 1)
+ 		{
+ 			XFetchName(X11Display, focusedWindow, &focusedWindowName);
+ 
+@@ -706,6 +710,10 @@ DWORD ShowOnlineHelp()
+ 	return 0;
+ }
+ 
++void UnhideConsole()
++{
++}
++
+ void HideConsole()
+ {
+ }
+diff --git a/JoyShockMapper/src/linux/PlatformDefinitions.cpp b/JoyShockMapper/src/linux/PlatformDefinitions.cpp
+index b5ac99e..5ea34fe 100644
+--- a/JoyShockMapper/src/linux/PlatformDefinitions.cpp
++++ b/JoyShockMapper/src/linux/PlatformDefinitions.cpp
+@@ -171,6 +171,21 @@ WORD nameToKey(const std::string &name)
+ 			}
+ 		}
+ 	}
++	// A quoted binding is a console command run on press -- loading another
++	// config file this way is how JSM does action layers. Only the win32
++	// nameToKey ever recognised it, so on Linux it silently failed to parse.
++	if (length > 2 && name[0] == '"' && name[length - 1] == '"')
++	{
++		return COMMAND_ACTION;
++	}
++	if (name.compare("LWINDOWS") == 0)
++	{
++		return VK_LWIN;
++	}
++	if (name.compare("RWINDOWS") == 0)
++	{
++		return VK_RWIN;
++	}
+ 	if (name.compare("LEFT") == 0)
+ 	{
+ 		return VK_LEFT;
+diff --git a/JoyShockMapper/src/linux/StatusNotifierItem.cpp b/JoyShockMapper/src/linux/StatusNotifierItem.cpp
+index 0c5cda9..7403141 100644
+--- a/JoyShockMapper/src/linux/StatusNotifierItem.cpp
++++ b/JoyShockMapper/src/linux/StatusNotifierItem.cpp
+@@ -3,7 +3,7 @@
+ #include <cstring>
+ 
+ StatusNotifierItem::StatusNotifierItem(TrayIconData, std::function<void()> &&beforeShow)
+-  : thread_{ [this, &beforeShow] {
++  : thread_{ [this, beforeShow = std::move(beforeShow)] {
+ 	  int argc = 0;
+ 	  gtk_init(&argc, nullptr);
+ 
+diff --git a/JoyShockMapper/src/main.cpp b/JoyShockMapper/src/main.cpp
+index 74442b9..75e23a8 100644
+--- a/JoyShockMapper/src/main.cpp
++++ b/JoyShockMapper/src/main.cpp
+@@ -3585,6 +3585,9 @@ int main(int argc, char *argv[])
+ 	                      ->SetHelp("Close the application."));
+ 
+ 	Mapping::_isCommandValid = bind(&CmdRegistry::isCommandValid, &commandRegistry, placeholders::_1);
++#ifdef __linux__
++	g_consoleCommandHandler = [&commandRegistry](in_string cmd) { commandRegistry.processLine(cmd); };
++#endif
+ 
+ 	connectDevices();
+ 	JslSetCallback(&joyShockPollCallback);
+diff --git a/JoyShockMapper/src/operators.cpp b/JoyShockMapper/src/operators.cpp
+index e8b33bf..470a4e7 100644
+--- a/JoyShockMapper/src/operators.cpp
++++ b/JoyShockMapper/src/operators.cpp
+@@ -1,6 +1,7 @@
+ #include "JoyShockMapper.h"
+ #include "ColorCodes.h"
+ 
++#include <cmath>
+ #include <cstring>
+ #include <sstream>
+ #include <memory>
+diff --git a/cmake/LinuxConfig.cmake b/cmake/LinuxConfig.cmake
+index d365e21..2b8dccd 100644
+--- a/cmake/LinuxConfig.cmake
++++ b/cmake/LinuxConfig.cmake
+@@ -4,7 +4,7 @@ if (UNIX AND NOT APPLE)
+     find_package (PkgConfig QUIET REQUIRED)
+ 
+     pkg_search_module (Gtkmm REQUIRED IMPORTED_TARGET gtk+-3.0)
+-    pkg_search_module (appindicator REQUIRED IMPORTED_TARGET appindicator3-0.1)
++    pkg_search_module (appindicator REQUIRED IMPORTED_TARGET ayatana-appindicator3-0.1)
+     pkg_search_module (evdev REQUIRED IMPORTED_TARGET libevdev)
+ 
+     add_library (

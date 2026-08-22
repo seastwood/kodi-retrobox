@@ -1,5 +1,8 @@
 Put your games in here, one folder per system.
 
+There is a folder for every system RetroArch can run -- 124 of them, empty and
+waiting. Most will stay empty; that is fine.
+
     ~/Games/emulation/snes/Super Mario World (USA).sfc
     ~/Games/emulation/sega-genesis/Sonic The Hedgehog (USA, Europe).md
     ~/Games/emulation/playstation/Final Fantasy VII (USA)/...cue
@@ -15,6 +18,8 @@ needs restarting. To make it happen immediately:
 Notes
   * The folder name is a convention, not a rule. RetroArch identifies games by
     hashing them, so a game in the "wrong" folder is still filed correctly.
+  * The emulator core for a system is downloaded the first time you put a game
+    for it in, so there is nothing to install per console.
   * Compressed disc images (.ciso, .chd) cannot be identified by hash. They
     still work, they just get their name from the filename.
   * Multi-disc games: keep every disc in one folder named "... (Disc 1)",

@@ -1,17 +1,41 @@
-# BIOS files each system needs, and where they go. These are not distributed
-# with this repository; supply your own dumps.
+# BIOS files, and where they go.
 #
-#   ~/.local/share/retroarch/system/
+#     ~/.local/share/retroarch/system/
 #
-# Sega CD / Mega-CD   bios_CD_U.bin   (USA)   131072 bytes
-#                     bios_CD_E.bin   (Europe)
-#                     bios_CD_J.bin   (Japan)
-#     The core names the exact file it wanted in its error, and the launcher
-#     turns that into "Missing BIOS file: bios_CD_U.bin" on screen.
+# Nothing here is distributed with this repository; supply your own dumps. Put
+# them in that folder, with exactly these names -- not in the ROM folders,
+# where a stray BIOS is dropped from the playlist for looking like a game.
 #
-# Mega Drive          bios_MD.bin     optional TMSS boot ROM; unused unless the
-#                                     core's system_bootrom option is enabled
+# If a game refuses to start, the launcher puts the reason on screen and names
+# the file, e.g. "Missing BIOS file: bios_CD_U.bin". That message is the
+# authority; this list is a convenience.
 #
-# Sonic & Knuckles    sk.bin + sk2chip.bin  optional, enables lock-on
+# system                      file                     needed?
+# --------------------------- ------------------------ ------------------------
+Sega CD / Mega-CD             bios_CD_U.bin            required (USA discs)
+                              bios_CD_E.bin            required (European)
+                              bios_CD_J.bin            required (Japanese)
+Sega Saturn                   sega_101.bin             required
+                              mpr-17933.bin            required (alternative)
+Sega Dreamcast                dc_boot.bin              required
+                              dc_flash.bin             required
+Sony PlayStation              scph5500.bin             required (Japan)
+                              scph5501.bin             required (USA)
+                              scph5502.bin             required (Europe)
+PC Engine CD / TurboGrafx-CD  syscard3.pce             required
+3DO                           panafz1.bin              required
+Atari Lynx                    lynxboot.img             required
+Famicom Disk System           disksys.rom              required
+Commodore Amiga               kick34005.A500.rom       required (per model)
+Neo Geo                       neogeo.zip               required (in the ROM folder)
+MSX / MSX2                    MSX.ROM, MSX2.ROM        required
+Sega Mega Drive               bios_MD.bin              optional TMSS boot ROM,
+                                                       unused unless the core's
+                                                       system_bootrom is enabled
+Sonic & Knuckles lock-on      sk.bin, sk2chip.bin      optional
+Game Boy / Color / Advance    dmg_boot.bin, gbc_bios.bin,
+                              gba_bios.bin             optional boot animations
 #
-# PlayStation, SNES, N64, Game Boy, GBA, Genesis: none required.
+# Everything else here -- NES, SNES, Nintendo 64, Mega Drive cartridges,
+# Master System, Game Gear, Atari 2600/5200/7800, and most home computers --
+# needs no BIOS at all.

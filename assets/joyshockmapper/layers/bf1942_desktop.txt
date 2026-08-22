@@ -1,0 +1,73 @@
+# Desktop navigation layer.
+#
+# This is a TEMPLATE. The Kodi editor copies it to layers/<game>_desktop.txt
+# and replaces ../../../../tmp/tmp0lvv1z29/bf1942.txt with the path of the config to go back to. Editing the
+# template only affects layers made after the edit; to change one that already
+# exists, edit that file instead.
+#
+# Entered from the game config with "-" and "+" pressed together, and left
+# again by pressing "+" on its own (or "-" and "+" together, as you entered).
+# Leaving works by loading the game config back over this one -- there is no
+# layer stack, just whichever file was loaded last.
+#
+# RESET_MAPPINGS is what makes this a replacement rather than an addition:
+# everything the game config set is dropped, so only the bindings below apply.
+RESET_MAPPINGS
+AUTOLOAD = OFF
+
+# The cursor is an OS cursor here, not a game camera, so counter the OS mouse
+# speed and use the desktop calibration.
+REAL_WORLD_CALIBRATION = 5.3333
+IN_GAME_SENS = 1
+COUNTER_OS_MOUSE_SPEED
+
+# --- right stick and gyro drive the cursor ---------------------------------
+RIGHT_STICK_MODE = AIM
+STICK_SENS = 360
+STICK_POWER = 1
+RIGHT_STICK_DEADZONE_INNER = 0.15
+RIGHT_STICK_DEADZONE_OUTER = 0.10
+GYRO_OFF = S
+MIN_GYRO_SENS = 8
+MAX_GYRO_SENS = 16
+MOUSE_X_FROM_GYRO_AXIS = Y
+MOUSE_Y_FROM_GYRO_AXIS = X
+GYRO_SMOOTH_THRESHOLD = 5
+
+# --- left stick scrolls ----------------------------------------------------
+LEFT_STICK_MODE = SCROLL_WHEEL
+LLEFT = SCROLLUP
+LRIGHT = SCROLLDOWN
+SCROLL_SENS = 60
+
+# --- clicks ----------------------------------------------------------------
+ZR = LMOUSE
+ZL = RMOUSE
+L3 = MMOUSE
+
+# --- d-pad is the arrow keys ----------------------------------------------
+UP = UP
+DOWN = DOWN
+LEFT = LEFT
+RIGHT = RIGHT
+
+# --- face buttons ----------------------------------------------------------
+E = ENTER
+W = BACKSPACE
+N = DELETE
+
+# --- bumpers are modifiers, so they combine with everything else -----------
+L = LALT
+R = LCONTROL
+R3 = TAB
+
+# --- combos ----------------------------------------------------------------
+-+UP = LWINDOWS
+-+LEFT = F13
+-+RIGHT = CALIBRATE
+- = ESC
+
+# --- leaving the layer -----------------------------------------------------
+# Both of these load the game config back over this one.
++ = "games/bf1942.txt"
+-++ = "games/bf1942.txt"

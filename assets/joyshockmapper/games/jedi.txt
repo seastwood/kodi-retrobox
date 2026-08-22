@@ -1,0 +1,15 @@
+# Jedi Academy - single player (OpenJK).  Layout: GyroConfigs/_base_fps.txt
+# LT gives right-mouse, which is the saber alt-attack.
+GyroConfigs/_base_fps.txt
+
+N  = C             # crouch
+LEFT = F           # use force power
+L  = LSHIFT        # walk
+R  = E             # use
+L3 = L             # cycle saber style
+R3 = MMOUSE
+
+# --- desktop layer ---------------------------------------------------------
+# Press - and + together to swap to a cursor-driven desktop layout;
+# press + on its own to come back here.
+-++ = "layers/jedi_desktop.txt"

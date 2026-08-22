@@ -1,0 +1,18 @@
+# Everything the PC-games side needs, installed by install.sh --with-optional.
+#
+# Wine runs the Windows games; JoyShockMapper turns a controller into keyboard
+# and mouse for games that have no pad support, and is built from source
+# because the Linux port needs patches (system/joyshockmapper/).
+
+# Wine, from the WineHQ repository install.sh adds
+winehq-staging
+winetricks
+
+# Building JoyShockMapper
+cmake
+g++
+make
+pkg-config
+libgtk-3-dev
+libayatana-appindicator3-dev
+libevdev-dev

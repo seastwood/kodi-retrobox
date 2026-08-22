@@ -1,0 +1,18 @@
+# Quake III Arena (Quake3e).  Layout: GyroConfigs/_base_fps.txt
+# Free buttons used here: X = crouch, dpad-left/L/R = weapon slots,
+# L3 = walk, R3 = middle mouse.
+GyroConfigs/_base_fps.txt
+
+N  = LCONTROL      # crouch
+LEFT = 5           # rocket launcher
+L  = 7             # railgun
+R  = 8             # plasma gun
+L3 = LSHIFT        # walk
+R3 = MMOUSE
+
+# Q3 has no reload; Y keeps the house R binding, harmless.
+
+# --- desktop layer ---------------------------------------------------------
+# Press - and + together to swap to a cursor-driven desktop layout;
+# press + on its own to come back here.
+-++ = "layers/quake3_desktop.txt"

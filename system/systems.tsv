@@ -1,0 +1,130 @@
+# Every system RetroArch can both identify and run on this machine.
+# folder<TAB>system name<TAB>default core
+#
+# install.sh makes an empty folder per line under ~/Games/emulation.
+# The folder name is for you, not for RetroArch: games are identified
+# by hashing them, so one in the wrong folder is still filed correctly.
+amstrad-cpc	Amstrad - CPC	cap32_libretro
+gx4000	Amstrad - GX4000	cap32_libretro
+arduboy	Arduboy Inc - Arduboy	ardens_libretro
+atari-2600	Atari - 2600	stella_libretro
+atari-5200	Atari - 5200	a5200_libretro
+atari-7800	Atari - 7800	prosystem_libretro
+8-bit-family	Atari - 8-bit Family	atari800_libretro
+jaguar	Atari - Jaguar	virtualjaguar_libretro
+lynx	Atari - Lynx	handy_libretro
+st	Atari - ST	hatari_libretro
+atomiswave	Atomiswave	flycast_libretro
+wonderswan	Bandai - WonderSwan	mednafen_wswan_libretro
+wonderswan-color	Bandai - WonderSwan Color	mednafen_wswan_libretro
+chip-8	CHIP-8	jaxe_libretro
+cannonball	Cannonball	cannonball_libretro
+cave-story	Cave Story	doukutsu_rs_libretro
+chailove	ChaiLove	chailove_libretro
+colecovision	Coleco - ColecoVision	bluemsx_libretro
+c64	Commodore - 64	vice_x64_libretro
+amiga	Commodore - Amiga	puae_libretro
+cd32	Commodore - CD32	puae_libretro
+cdtv	Commodore - CDTV	puae_libretro
+pet	Commodore - PET	vice_xpet_libretro
+plus-4	Commodore - Plus-4	vice_xplus4_libretro
+vic-20	Commodore - VIC-20	vice_xvic_libretro
+dice	DICE	dice_libretro
+doom	DOOM	prboom_libretro
+dos	DOS	dosbox_pure_libretro
+dinothawr	Dinothawr	dinothawr_libretro
+128	Enterprise - 128	ep128emu_core_libretro
+super-cassette-vision	Epoch - Super Cassette Vision	emuscv_libretro
+arcade	FBNeo - Arcade Games	fbneo_libretro
+channel-f	Fairchild - Channel F	freechaf_libretro
+flashback	Flashback	reminiscence_libretro
+vectrex	GCE - Vectrex	vecx_libretro
+hbmame	HBMAME	hbmame_libretro
+handheld-electronic-game	Handheld Electronic Game	gw_libretro
+z-machine	Infocom - Z-Machine	mojozork_libretro
+jump-n-bump	Jump 'n Bump	jumpnbump_libretro
+lowres-nx	LowRes NX	lowresnx_libretro
+lutro	Lutro	lutro_libretro
+mame	MAME	mame_libretro
+mame-2000	MAME 2000	mame2000_libretro
+mame-2003	MAME 2003	mame2003_libretro
+mame-2003-plus	MAME 2003-Plus	mame2003_plus_libretro
+mame-2010	MAME 2010	mame2010_libretro
+mame-2015	MAME 2015	mame2015_libretro
+mame-2016	MAME 2016	mame2016_libretro
+odyssey2	Magnavox - Odyssey2	o2em_libretro
+intellivision	Mattel - Intellivision	freeintv_libretro
+microw8	MicroW8	uw8_libretro
+msx	Microsoft - MSX	bluemsx_libretro
+msx2	Microsoft - MSX2	bluemsx_libretro
+xbox	Microsoft - Xbox	directxbox_libretro
+j2me	Mobile - J2ME	freej2me_libretro
+mrboom	MrBoom	mrboom_libretro
+pc-engine	NEC - PC Engine - TurboGrafx 16	mednafen_pce_libretro
+pc-engine-cd	NEC - PC Engine CD - TurboGrafx-CD	mednafen_pce_libretro
+pc-engine-supergrafx	NEC - PC Engine SuperGrafx	mednafen_pce_libretro
+pc-8001-pc-8801	NEC - PC-8001 - PC-8801	quasi88_libretro
+pc-98	NEC - PC-98	nekop2_libretro
+pc-fx	NEC - PC-FX	mednafen_pcfx_libretro
+famicom-disk	Nintendo - Family Computer Disk System	fceumm_libretro
+gb	Nintendo - Game Boy	DoubleCherryGB_libretro
+gba	Nintendo - Game Boy Advance	skyemu_libretro
+gbc	Nintendo - Game Boy Color	DoubleCherryGB_libretro
+gamecube	Nintendo - GameCube	dolphin_libretro
+nintendo-3ds	Nintendo - Nintendo 3DS	azahar_libretro
+n64	Nintendo - Nintendo 64	mupen64plus_next_libretro
+nintendo-64dd	Nintendo - Nintendo 64DD	parallel_n64_debug_libretro
+nds	Nintendo - Nintendo DS	skyemu_libretro
+nintendo-dsi	Nintendo - Nintendo DSi	melonds_libretro
+nes	Nintendo - Nintendo Entertainment System	fceumm_libretro
+pokemon-mini	Nintendo - Pokemon Mini	pokemini_libretro
+satellaview	Nintendo - Satellaview	snes9x_libretro
+sufami-turbo	Nintendo - Sufami Turbo	snes9x_libretro
+snes	Nintendo - Super Nintendo Entertainment System	snes9x_libretro
+virtualboy	Nintendo - Virtual Boy	mednafen_vb_libretro
+wii	Nintendo - Wii	dolphin_libretro
+wii-digital	Nintendo - Wii (Digital)	dolphin_libretro
+pico-8	PICO-8	fake08_libretro
+cd-i	Philips - CD-i	cdi2015_libretro
+videopac	Philips - Videopac+	o2em_libretro
+puzzlescript	PuzzleScript	puzzlescript_libretro
+quake	Quake	tyrquake_libretro
+quake-ii	Quake II	vitaquake2-rogue_libretro
+quake-iii	Quake III	vitaquake3_libretro
+rpg-maker	RPG Maker	easyrpg_libretro
+rick-dangerous	Rick Dangerous	xrick_libretro
+neo-geo	SNK - Neo Geo	geolith_libretro
+neo-geo-cd	SNK - Neo Geo CD	neocd_libretro
+neogeo-pocket	SNK - Neo Geo Pocket	mednafen_ngp_libretro
+neogeo-pocket-color	SNK - Neo Geo Pocket Color	mednafen_ngp_libretro
+scummvm	ScummVM	scummvm_libretro
+sega-32x	Sega - 32X	picodrive_libretro
+dreamcast	Sega - Dreamcast	flycast_libretro
+game-gear	Sega - Game Gear	genesis_plus_gx_wide_libretro
+master-system	Sega - Master System - Mark III	genesis_plus_gx_wide_libretro
+sega-genesis	Sega - Mega Drive - Genesis	genesis_plus_gx_wide_libretro
+sega-cd	Sega - Mega-CD - Sega CD	genesis_plus_gx_wide_libretro
+naomi	Sega - Naomi	flycast_libretro
+naomi-2	Sega - Naomi 2	flycast_libretro
+pico	Sega - PICO	genesis_plus_gx_wide_libretro
+sg-1000	Sega - SG-1000	genesis_plus_gx_wide_libretro
+saturn	Sega - Saturn	yabause_libretro
+x1	Sharp - X1	x1_libretro
+x68000	Sharp - X68000	px68k_libretro
+zx-81	Sinclair - ZX 81	81_libretro
+zx-spectrum	Sinclair - ZX Spectrum	fuse_libretro
+zx-spectrum-3	Sinclair - ZX Spectrum +3	fuse_libretro
+playstation	Sony - PlayStation	mednafen_psx_hw_libretro
+playstation-2	Sony - PlayStation 2	pcsx2_libretro
+psp	Sony - PlayStation Portable	ppsspp_libretro
+svi-318-svi-328	Spectravideo - SVI-318 - SVI-328	bluemsx_libretro
+tic-80	TIC-80	tic80_libretro
+3do	The 3DO Company - 3DO	opera_libretro
+moto	Thomson - MOTO	theodore_libretro
+tomb-raider	Tomb Raider	openlara_libretro
+uzebox	Uzebox	uzem_libretro
+tv-computer	Videoton - TV-Computer	ep128emu_core_libretro
+vircon32	Vircon32	vircon32_libretro
+wasm-4	WASM-4	wasm4_libretro
+supervision	Watara - Supervision	potator_libretro
+wolfenstein-3d	Wolfenstein 3D	ecwolf_libretro

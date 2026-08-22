@@ -1,0 +1,14 @@
+# Wolfenstein: Enemy Territory (ET: Legacy).  Layout: GyroConfigs/_base_fps.txt
+GyroConfigs/_base_fps.txt
+
+N  = C             # crouch
+LEFT = X           # prone
+L  = LSHIFT        # sprint
+R  = F             # activate / use
+L3 = G             # grenade
+R3 = V             # voice chat menu
+
+# --- desktop layer ---------------------------------------------------------
+# Press - and + together to swap to a cursor-driven desktop layout;
+# press + on its own to come back here.
+-++ = "layers/etlegacy_desktop.txt"

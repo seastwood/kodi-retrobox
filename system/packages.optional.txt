@@ -1,5 +1,0 @@
-# PC games under Wine. Needs the WineHQ repository, which install.sh adds only
-# when this list is requested (--with-optional), because it is a third-party
-# repository and a console that only runs emulators does not need it.
-winehq-staging
-winetricks

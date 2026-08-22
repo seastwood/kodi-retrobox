@@ -1,0 +1,15 @@
+# Call of Duty 4 - single player.  Layout: GyroConfigs/_base_fps.txt
+# dpad-right = Q is CoD4's special grenade, which lines up nicely.
+GyroConfigs/_base_fps.txt
+
+N  = C             # crouch
+LEFT = G           # frag grenade
+L  = LSHIFT        # sprint
+R  = F             # use
+L3 = LCONTROL      # prone
+R3 = V             # melee
+
+# --- desktop layer ---------------------------------------------------------
+# Press - and + together to swap to a cursor-driven desktop layout;
+# press + on its own to come back here.
+-++ = "layers/cod4_desktop.txt"

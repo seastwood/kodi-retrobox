@@ -1,0 +1,107 @@
+# ============================================================================
+# _base_cursor.txt - shared base for the CURSOR-driven games (RTS / RPG).
+#
+# Same controller shape as _base_fps.txt with two deliberate differences:
+#  * the left stick sends ARROW KEYS, not WASD. Warcraft III scrolls the
+#    camera with the arrows, and W/A/S/D are ability hotkeys there -- WASD
+#    would fire abilities every time you moved the camera.
+#  * COUNTER_OS_MOUSE_SPEED is on and the calibration is the desktop value,
+#    because these games use the OS cursor rather than raw mouse input.
+#
+# Face-button names are POSITIONAL: on a Switch Pro
+#   S = bottom = B      E = right = A      W = left = Y      N = top = X
+# ============================================================================
+RESET_MAPPINGS
+AUTOLOAD = OFF
+
+# --- calibration -----------------------------------------------------------
+REAL_WORLD_CALIBRATION = 5.3333
+IN_GAME_SENS = 1
+COUNTER_OS_MOUSE_SPEED
+
+# --- left stick: camera scroll ---------------------------------------------
+LEFT_STICK_MODE = NO_MOUSE
+LUP = UP
+LDOWN = DOWN
+LLEFT = LEFT
+LRIGHT = RIGHT
+LEFT_STICK_DEADZONE_INNER = 0.20
+LEFT_STICK_DEADZONE_OUTER = 0.10
+
+# --- right stick: cursor ---------------------------------------------------
+RIGHT_STICK_MODE = AIM
+STICK_SENS = 360
+STICK_POWER = 1
+STICK_ACCELERATION_RATE = 2
+STICK_ACCELERATION_CAP = 4
+RIGHT_STICK_DEADZONE_INNER = 0.15
+RIGHT_STICK_DEADZONE_OUTER = 0.10
+
+# --- gyro: always on, B mutes it while held --------------------------------
+GYRO_OFF = S
+MIN_GYRO_SENS = 8
+MAX_GYRO_SENS = 16
+MIN_GYRO_THRESHOLD = 5
+MAX_GYRO_THRESHOLD = 75
+MOUSE_X_FROM_GYRO_AXIS = Y
+MOUSE_Y_FROM_GYRO_AXIS = X
+GYRO_SMOOTH_THRESHOLD = 5
+GYRO_CUTOFF_RECOVERY = 5
+
+# --- triggers: RT selects (left click), LT commands (right click) ----------
+ZR = LMOUSE
+ZL = RMOUSE
+
+# --- dpad ------------------------------------------------------------------
+UP = SCROLLUP
+DOWN = SCROLLDOWN
+RIGHT = Q
+
+# --- face buttons ----------------------------------------------------------
+W = R
+E = SPACE
+
+# --- combos ----------------------------------------------------------------
+# "A+B" is a simultaneous press (both pressed within SIM_PRESS_WINDOW); "A,B"
+# is a chord (B pressed while A is held). Both override the individual
+# bindings of the buttons involved.
+#
+# CALIBRATE is the gyro calibration built into JoyShockMapper: tap to start,
+# tap again to stop, or hold it and calibration finishes the moment you let go.
+# Put the controller down on something solid first; a second or two is plenty.
+# (A fixed-duration version driven by SLEEP does not work here -- SLEEP blocks
+# the same thread that collects the gyro samples, so it would calibrate on no
+# data at all.)
+-+RIGHT = CALIBRATE
+
+# Super. LWINDOWS did not exist in the Linux build until the key was added to
+# nameToKey and mapped to KEY_LEFTMETA; see the notes in the source tree.
+-+UP = LWINDOWS
+
+# On-screen keyboard. F13 has no physical key, so nothing else can send it --
+# the XFCE shortcut on F13 runs osk-toggle, which shows or hides onboard.
+-+LEFT = F13
+
+# --- in-game gyro tuning -----------------------------------------------------
+# Hold + and tap the d-pad to change gyro sensitivity without leaving the game.
+# A quoted binding runs a JoyShockMapper console command on press, so these
+# take effect immediately -- no relaunch, and nothing is written to disk, so
+# the value here is what you get next time.
+#
+# + on its own is still TAB: a chord only overrides while the chord button is
+# held. There is no on-screen feedback, so these are by feel.
+#
+# JSM combos are at most two buttons, so a four-button chord is not expressible
+# -- holding + is the closest thing to a modifier key the pad has spare.
++,UP = "GYRO_SENS = 4"
++,RIGHT = "GYRO_SENS = 3"
++,LEFT = "GYRO_SENS = 2"
++,DOWN = "GYRO_SENS = 1"
+
+# Right stick speed, in degrees of camera turn per second at full tilt.
++,N = "STICK_SENS = 360"
++,S = "STICK_SENS = 180"
+
+# --- menus -----------------------------------------------------------------
+- = ESC
++ = TAB

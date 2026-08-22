@@ -1,0 +1,16 @@
+# Battlefield 1942.  Layout: GyroConfigs/_base_fps.txt
+# NOTE: BF1942's stance keys are worth confirming in its Controls screen --
+# C/Z is the common default but this install has a disc-era profile.
+GyroConfigs/_base_fps.txt
+
+N  = C             # crouch
+LEFT = Z           # prone
+L  = LSHIFT
+R  = E             # enter / exit vehicle
+L3 = G             # grenade
+R3 = ^LCONTROL
+
+# --- desktop layer ---------------------------------------------------------
+# Press - and + together to swap to a cursor-driven desktop layout;
+# press + on its own to come back here.
+-++ = "layers/bf1942_desktop.txt"
