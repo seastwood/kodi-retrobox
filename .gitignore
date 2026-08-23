@@ -14,3 +14,8 @@ backup/backup.conf
 # under system/ needs ignoring. Leaving those rules here once silently dropped
 # system/kodi-addons.txt -- a curated list that shares a name with an old
 # capture -- out of the published repository.
+
+# install.sh drops a "games" symlink in here as a signpost to
+# ~/Games/emulation. It is generated, and left untracked it made every
+# update.sh run stash something.
+games

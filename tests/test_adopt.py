@@ -17,7 +17,7 @@ import subprocess
 import sys
 import tempfile
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 ADOPT = os.path.join(REPO, "install", "adopt.sh")
 
 OLD = "/home/" + "retro"          # what the repository is written for
@@ -89,7 +89,7 @@ check("/home/bob/Games/emulation" in once, "adopted")
 check(body(repo2) == once, "and idempotent too")
 
 print("\n-- this test survives being adopted itself --")
-source = open(os.path.abspath(__file__)).read()
+source = open(os.path.realpath(__file__)).read()
 check(OLD not in source.replace('"/home/" + "retro"', ""),
       "no literal home anywhere in this file for adopt.sh to rewrite")
 
