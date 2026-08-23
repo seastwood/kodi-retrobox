@@ -10,6 +10,15 @@
 # Kodi must have been started once and quit, because it creates its add-on
 # database on first run and this edits that database. Run it with Kodi closed.
 set -u
+
+# Kodi has to run once before it has an add-on database to configure, and
+# starting it needs a display. Over ssh there is no DISPLAY, so the bootstrap
+# was skipped and the whole Kodi phase deferred with a warning -- on a machine
+# that had a perfectly good session on :0 all along. Adopt it when there is
+# one, so installing remotely finishes the job like installing locally does.
+if [ -z "${DISPLAY:-}" ] && [ -e /tmp/.X11-unix/X0 ]; then
+  export DISPLAY=:0
+fi
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 KODI="$HOME/.kodi"
 ADDONS="$KODI/addons"
