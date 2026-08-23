@@ -21,11 +21,18 @@ sleep 10
 # pcgame_launch.py leaves this file behind while a game that wants the whole
 # screen is running. Kodi was killed on purpose, so the non-zero exit is not a
 # crash and must not be treated as one.
+# This script is symlinked into ~/.local/bin, so resolve the link before
+# walking up out of bin/ -- $0 is the link, not the file.
+REPO_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 HOLD="$HOME/.local/state/kodi-hold"
 # Settings > "Restart Kodi if it crashes" writes this. Someone debugging a
 # skin or an add-on wants Kodi to stay down when it dies, not to be put back
 # five times before the message can be read.
 NO_RESTART="$HOME/.config/retrobox-no-restart"
+# Settings > "Restore from a backup" writes the chosen backup here and quits
+# Kodi. A restore cannot run while Kodi is up, so it happens in this gap.
+RESTORE_REQ="$HOME/.local/state/restore-request"
+RESTORE_LOG="$HOME/.local/state/restore.log"
 
 # A JoyShockMapper left over from a game types into whatever has focus, and
 # once Kodi is the thing with focus that is the menu. With no hold file there
@@ -46,6 +53,31 @@ while :; do
     started=$(date +%s)
     kodi -fs
     rc=$?
+
+    # Before the clean-exit check: a restore is asked for by quitting Kodi, so
+    # rc is 0 and the loop would otherwise stop here and never come back.
+    if [ -e "$RESTORE_REQ" ]; then
+        from=$(head -1 "$RESTORE_REQ" 2>/dev/null)
+        rm -f "$RESTORE_REQ"
+        if [ -n "$from" ] && [ -d "$from" ]; then
+            logger -t kodi-autostart "restoring from $from"
+            notify-send "Restoring" "$(basename "$from")" 2>/dev/null
+            "$REPO_DIR/install/restore.sh" --yes --from "$from" \
+                > "$RESTORE_LOG" 2>&1
+            if [ $? -eq 0 ]; then
+                notify-send "Restore finished" "Kodi is starting again" 2>/dev/null
+            else
+                notify-send -u critical "Restore failed" \
+                    "See $RESTORE_LOG" 2>/dev/null
+            fi
+        else
+            logger -t kodi-autostart "restore asked for, but $from is not there"
+        fi
+        fails=0
+        sleep 2
+        continue
+    fi
+
     [ "$rc" -eq 0 ] && break
 
     if [ -e "$HOLD" ]; then

@@ -532,9 +532,10 @@ def list_pc_games():
         # Adding a game from the television is no use without a way back out
         # of it: the menu button on the pad opens this.
         item.addContextMenuItems([
+            ("Set picture", "RunPlugin(%s)" % url(artpcgame=game["id"])),
+            ("Rename", "RunPlugin(%s)" % url(renamepcgame=game["id"])),
             ("Remove from PC Games",
              "RunPlugin(%s)" % url(removepcgame=game["id"])),
-            ("Rename", "RunPlugin(%s)" % url(renamepcgame=game["id"])),
         ])
         target = url(pcgame=game["id"])
         xbmcplugin.addDirectoryItem(HANDLE, target, item, False)
@@ -654,6 +655,91 @@ def run_backup():
     return True
 
 
+RESTORE_SH = os.path.join(REPO, "install", "restore.sh")
+# kodi-autostart.sh looks for this after Kodi exits. A restore cannot run
+# while Kodi is up -- Kodi rewrites its own userdata as it quits, straight
+# over anything just put back -- so the request is left here and carried out
+# in the gap between Kodi stopping and starting again.
+RESTORE_REQUEST = os.path.expanduser("~/.local/state/restore-request")
+
+
+def backup_generations():
+    """Dated backup directories under the first local: destination."""
+    root = ""
+    try:
+        with open(BACKUP_CONF) as handle:
+            for line in handle:
+                line = line.strip()
+                if line.startswith("local:"):
+                    root = os.path.expanduser(line.split(":", 1)[1].strip())
+                    break
+    except OSError:
+        pass
+    if not root or not os.path.isdir(root):
+        return []
+    out = []
+    for name in sorted(os.listdir(root), reverse=True):
+        path = os.path.join(root, name)
+        if name == "latest" or not os.path.isdir(path):
+            continue
+        out.append((name, path))
+    return out
+
+
+def restore_backup():
+    """Ask which backup, then have the supervisor apply it while Kodi is down."""
+    if not os.path.exists(RESTORE_SH):
+        xbmcgui.Dialog().ok("Restore", "restore.sh was not found at\n%s"
+                            % RESTORE_SH)
+        return
+    gens = backup_generations()
+    if not gens:
+        xbmcgui.Dialog().ok(
+            "Restore",
+            "No backups found.\n\nBackups are switched off until a "
+            "destination is set in backup/backup.conf.")
+        return
+
+    pick = xbmcgui.Dialog().select(
+        "Restore which backup?", ["%s" % name for name, _ in gens])
+    if pick < 0:
+        return
+    name, path = gens[pick]
+
+    if not xbmcgui.Dialog().yesno(
+            "Restore from %s" % name,
+            "This replaces your saves, playlists and settings with the ones "
+            "in that backup.\n\nWhatever is there now is kept in "
+            "~/.local/state, and your games are not touched.\n\n"
+            "Kodi will close, restore, and start again.",
+            nolabel="Cancel", yeslabel="Restore"):
+        return
+
+    try:
+        os.makedirs(os.path.dirname(RESTORE_REQUEST), exist_ok=True)
+        with open(RESTORE_REQUEST, "w") as handle:
+            handle.write(path + "\n")
+    except OSError as err:
+        xbmcgui.Dialog().ok("Restore", "Could not ask for the restore: %s" % err)
+        return
+
+    if not os.path.exists(os.path.expanduser("~/.local/bin/kodi-autostart.sh")):
+        xbmcgui.Dialog().ok(
+            "Restore",
+            "Kodi is not being supervised, so nothing would bring it back "
+            "afterwards.\n\nQuit Kodi and run install/restore.sh yourself.")
+        try:
+            os.remove(RESTORE_REQUEST)
+        except OSError:
+            pass
+        return
+
+    xbmcgui.Dialog().notification("Restoring", "Kodi will close and come back",
+                                  xbmcgui.NOTIFICATION_INFO)
+    xbmc.sleep(2500)
+    xbmc.executebuiltin("Quit()")
+
+
 def update_system():
     """Pull the latest version and re-run the install.
 
@@ -768,10 +854,12 @@ def settings_screen():
             "Run the game sync now",
             "Stop a game that will not close",
             "Update this console",
+            "Restore from a backup",
+            "Kodi's own settings",
             "Close",
         ]
         pick = xbmcgui.Dialog().select("Settings", rows)
-        if pick in (-1, 5):
+        if pick in (-1, 7):
             return
         if pick == 0:
             wanted = not autostart_on()
@@ -798,6 +886,14 @@ def settings_screen():
             stop_stuck_game()
         elif pick == 4:
             update_system()
+            return
+        elif pick == 5:
+            restore_backup()
+            return
+        elif pick == 6:
+            # Otherwise the only way in is the S key, which a console with no
+            # keyboard does not have.
+            xbmc.executebuiltin("ActivateWindow(Settings)")
             return
 
 
@@ -829,6 +925,57 @@ def remove_pc_game(game_id):
         return
     if write_pc_games([g for g in games if g.get("id") != game_id]):
         xbmcgui.Dialog().notification("Removed", name,
+                                      xbmcgui.NOTIFICATION_INFO)
+        xbmc.executebuiltin("Container.Refresh")
+
+
+PC_ART_DIR = os.path.expanduser("~/.kodi/media/pcgames")
+
+
+def set_pc_art(game_id):
+    """Give a PC game a picture, chosen with the controller.
+
+    The file is copied into ~/.kodi/media/pcgames rather than linked, so the
+    tile does not go blank later because the picture was on a stick, or inside
+    a game folder that was moved.
+    """
+    games = pc_games(all_declared=True)
+    game = next((g for g in games if g.get("id") == game_id), None)
+    if not game:
+        return
+    name = game.get("name", game_id)
+
+    start = game.get("cwd") or PC_ROOT
+    if not os.path.isdir(os.path.expanduser(start)):
+        start = os.path.expanduser("~")
+    chosen = xbmcgui.Dialog().browse(
+        2, "Picture for %s" % name, "files", ".jpg|.jpeg|.png",
+        True, False, os.path.expanduser(start))
+    if not chosen or not os.path.isfile(chosen):
+        return
+
+    ext = os.path.splitext(chosen)[1].lower() or ".jpg"
+    dest = os.path.join(PC_ART_DIR, "%s%s" % (game_id, ext))
+    try:
+        os.makedirs(PC_ART_DIR, exist_ok=True)
+        with open(chosen, "rb") as src, open(dest, "wb") as out:
+            out.write(src.read())
+    except OSError as err:
+        xbmcgui.Dialog().ok("Set picture", "Could not copy it: %s" % err)
+        return
+
+    # An older picture in the other format would otherwise sit there unused.
+    for other in (".jpg", ".jpeg", ".png"):
+        stale = os.path.join(PC_ART_DIR, "%s%s" % (game_id, other))
+        if other != ext and os.path.exists(stale):
+            try:
+                os.remove(stale)
+            except OSError:
+                pass
+
+    game["art"] = dest
+    if write_pc_games(games):
+        xbmcgui.Dialog().notification("Picture set", name,
                                       xbmcgui.NOTIFICATION_INFO)
         xbmc.executebuiltin("Container.Refresh")
 
@@ -992,6 +1139,10 @@ def add_pc_game():
     if not write_pc_games(games):
         return
 
+    if dialog.yesno("Add Game", "Give [B]%s[/B] a picture now?" % name,
+                    nolabel="Later", yeslabel="Choose one"):
+        set_pc_art(entry["id"])
+
     mapping = os.path.expanduser(
         "~/.config/JoyShockMapper/games/%s.txt" % entry["id"])
     dialog.notification("Added", "%s%s" % (
@@ -1056,6 +1207,8 @@ def main():
         remove_pc_game(args["removepcgame"])
     elif args.get("renamepcgame"):
         rename_pc_game(args["renamepcgame"])
+    elif args.get("artpcgame"):
+        set_pc_art(args["artpcgame"])
     elif args.get("syncgames"):
         sync_games_now()
     elif args.get("settings"):
