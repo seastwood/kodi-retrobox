@@ -39,9 +39,11 @@ of filenames.
 These land on your machine from their own publishers. Nothing is mirrored or
 re-hosted here.
 
-## Acknowledged, not used
+## Not third-party at all
 
-The USB/IP add-on's design — which four `usbip` calls to make, and on which
-side — was learned from reading **usb-audio-ip-client**, a PyQt tool by another
-author. No code from it is here; see the note at the top of
-`addons/script.usbip/usbip_core.py`.
+The USB/IP add-on carries over the design — which four `usbip` calls to make,
+and on which side — from
+[usb-audio-ip-client](https://github.com/seastwood/usb-audio-ip-client), the
+same author's earlier tool, reimplemented here against the ssh client and a
+key rather than paramiko and passwords. Same author, so no third-party terms
+apply.
