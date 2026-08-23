@@ -1,0 +1,37 @@
+# ============================================================================
+# rom2_desktop.txt - the cursor layer, reached by pressing - and + together.
+#
+# For menus, launchers, installers and anything else that wants a pointer
+# rather than mouse-look. Press + on its own to go back to the game.
+#
+# It also carries a way out. A game that stops responding while fullscreen
+# leaves nothing above it -- pressing Super opens the desktop menu *behind*
+# an unmanaged fullscreen window, so the machine looks frozen when it is not.
+# Hold L and press N to send ALT+F4 and ask the window to close.
+#
+# Face-button names are POSITIONAL, not Nintendo labels:
+#   S = bottom      E = right      W = left      N = top
+# ============================================================================
+GyroConfigs/_base_cursor.txt
+
+# --- pointer ---------------------------------------------------------------
+S = LMOUSE
+E = RMOUSE
+R3 = MMOUSE
+
+# --- the keys every dialog needs -------------------------------------------
+W = ENTER
+UP = UP
+DOWN = DOWN
+LEFT = LEFT
+RIGHT = RIGHT
+R = ESC
+ZR = TAB
+
+# --- the way out -----------------------------------------------------------
+# L is the modifier, N is F4, so L held + N pressed is ALT+F4.
+L = LALT
+N = F4
+
+# --- back to the game ------------------------------------------------------
++ = "games/rom2.txt"

@@ -650,6 +650,32 @@ PC_ROOT = os.path.expanduser("~/Games/pc")
 WINE_RUNNER = os.path.expanduser("~/.local/bin/run-wine-game.sh")
 
 
+def wine_prefixes():
+    """Every Wine prefix on this machine, newest-looking first.
+
+    A Wine game lives under <prefix>/drive_c, and the usual prefix is ~/.wine
+    -- a dotfolder Kodi's browser will not show. Offering the prefixes as
+    starting points means never having to navigate into a hidden directory.
+    """
+    found = []
+    for path in [os.path.expanduser("~/.wine")] + sorted(
+            glob.glob(os.path.expanduser("~/.local/share/wine/*"))):
+        drive = os.path.join(path, "drive_c")
+        if os.path.isdir(drive):
+            found.append((os.path.basename(path.rstrip("/")), path, drive))
+    return found
+
+
+def prefix_of(path):
+    """The Wine prefix a path sits in, or None. Set as WINEPREFIX on the entry
+    so the game runs in the prefix it was installed into rather than the
+    default one."""
+    marker = os.sep + "drive_c" + os.sep
+    if marker in path:
+        return path[:path.index(marker)]
+    return None
+
+
 def _slug(text, taken):
     """A short id from the game's name, unique among the ones already used."""
     base = "".join(c.lower() if c.isalnum() else "-" for c in text)
@@ -668,7 +694,21 @@ def add_pc_game():
     game never requires going and editing pcgames.json by hand.
     """
     dialog = xbmcgui.Dialog()
-    start = PC_ROOT if os.path.isdir(PC_ROOT) else os.path.expanduser("~")
+    places = []
+    if os.path.isdir(PC_ROOT):
+        places.append(("Games folder", PC_ROOT))
+    for name, _prefix, drive in wine_prefixes():
+        places.append(("Wine: %s" % name, drive))
+    places.append(("Home folder", os.path.expanduser("~")))
+
+    if len(places) > 1:
+        pick = dialog.select("Where is the game?", [p[0] for p in places])
+        if pick < 0:
+            return
+        start = places[pick][1]
+    else:
+        start = places[0][1]
+
     chosen = dialog.browse(1, "Choose the game's program file", "files",
                            "", False, False, start)
     if not chosen or not os.path.isfile(chosen):
@@ -695,6 +735,11 @@ def add_pc_game():
                                   "with --with-optional.")
             return
         entry["exec"] = [WINE_RUNNER, folder, os.path.basename(chosen)]
+        # run-wine-game.sh otherwise falls back to its own default prefix,
+        # which would be the wrong one for a game installed elsewhere.
+        prefix = prefix_of(chosen)
+        if prefix:
+            entry["env"] = {"WINEPREFIX": prefix}
     else:
         if not os.access(chosen, os.X_OK):
             try:
