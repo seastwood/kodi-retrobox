@@ -42,8 +42,8 @@ can be built again on other hardware.
 ## Installing
 
     sudo apt install -y git                   # a stock Mint 22 has no git
-    git clone https://github.com/seastwood/kodi-retrobox ~/kodi-retrobox
-    ~/kodi-retrobox/install/install.sh
+    git clone https://github.com/seastwood/kodi-retrobox ~/retrobox
+    ~/retrobox/install/install.sh
 
 Then log out and back in, and put your games in `~/Games/emulation/`. That is
 the whole process — **[INSTALL.md](INSTALL.md) walks through it step by step**,
@@ -113,7 +113,7 @@ say) over the network, so a pad in another room shows up here as a local USB
 device. Everything the add-on does needs root, which it cannot arrange for
 itself, so run this once:
 
-    sudo ~/kodi-retrobox/bin/usbip-setup-root.sh
+    sudo ~/retrobox/bin/usbip-setup-root.sh
 
 It installs the tools, loads `vhci-hcd` and makes that permanent, and grants
 the user passwordless sudo for the `usbip` binary alone. Re-running it is
