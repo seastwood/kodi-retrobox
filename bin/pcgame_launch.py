@@ -168,6 +168,12 @@ def start_jsm(config):
     it ignores a config given as an argument. stdin is left open so its command
     loop keeps running.
     """
+    # Never leave two of these alive. Each one synthesises key presses, so a
+    # second instance makes every d-pad press arrive twice -- and if one
+    # outlives its game it types into whatever has focus next, which is Kodi.
+    # That is what "the menu jumps three rows" turned out to be.
+    subprocess.run(["pkill", "-x", "JoyShockMapper"], check=False)
+    time.sleep(1)
     if not config or not os.path.exists(JSM_BIN) or not os.path.exists(config):
         return None
     env = dict(os.environ)

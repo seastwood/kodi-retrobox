@@ -607,6 +607,45 @@ def set_autostart(on):
         return False
 
 
+STUCK = ["JoyShockMapper", "jsm-hud", "Baldur.exe", "BF2.exe", "bf1942.exe",
+         "iw3sp.exe", "iw3mp.exe", "quake3e.x64", "etl.x86_64",
+         "openjk.x86_64", "openjk_sp.x86_64"]
+
+
+def stop_stuck_game():
+    """Stop a game, and anything it left behind, without a keyboard.
+
+    A game that has stopped responding cannot be closed from its own menu, and
+    a JoyShockMapper that outlives one types into Kodi. Exact process names
+    only -- a -f pattern would match this add-on.
+    """
+    found = []
+    for name in STUCK:
+        if subprocess.run(["pgrep", "-x", name], stdout=subprocess.DEVNULL,
+                          stderr=subprocess.DEVNULL, check=False).returncode == 0:
+            found.append(name)
+    if not found:
+        xbmcgui.Dialog().ok("Settings", "Nothing is running that needs stopping.")
+        return
+    if not xbmcgui.Dialog().yesno(
+            "Stop a game", "Still running:\n\n[B]%s[/B]\n\nStop them?"
+            % ", ".join(found), nolabel="Leave", yeslabel="Stop"):
+        return
+    for name in found:
+        subprocess.run(["pkill", "-x", name], check=False)
+    xbmc.sleep(3000)
+    for name in found:
+        subprocess.run(["pkill", "-9", "-x", name], check=False)
+    subprocess.run(["wineserver", "-k"], check=False,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        os.remove(os.path.expanduser("~/.local/state/kodi-hold"))
+    except OSError:
+        pass
+    xbmcgui.Dialog().notification("Stopped", ", ".join(found),
+                                  xbmcgui.NOTIFICATION_INFO)
+
+
 def settings_screen():
     """The handful of things about this console worth changing from the sofa.
 
@@ -620,10 +659,11 @@ def settings_screen():
             "Start Kodi at login:  %s" % ("ON" if autostart_on() else "off"),
             "Restart Kodi if it crashes:  %s" % ("ON" if restart else "off"),
             "Run the game sync now",
+            "Stop a game that will not close",
             "Close",
         ]
         pick = xbmcgui.Dialog().select("Settings", rows)
-        if pick in (-1, 3):
+        if pick in (-1, 4):
             return
         if pick == 0:
             wanted = not autostart_on()
@@ -646,6 +686,8 @@ def settings_screen():
         elif pick == 2:
             sync_games_now()
             return
+        elif pick == 3:
+            stop_stuck_game()
 
 
 def write_pc_games(games):

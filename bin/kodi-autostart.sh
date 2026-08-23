@@ -27,8 +27,22 @@ HOLD="$HOME/.local/state/kodi-hold"
 # five times before the message can be read.
 NO_RESTART="$HOME/.config/retrobox-no-restart"
 
+# A JoyShockMapper left over from a game types into whatever has focus, and
+# once Kodi is the thing with focus that is the menu. With no hold file there
+# is no game entitled to the screen, so anything still running is a leftover.
+tidy_orphans() {
+    [ -e "$HOLD" ] && return 0
+    for p in JoyShockMapper jsm-hud; do
+        if pgrep -x "$p" >/dev/null 2>&1; then
+            logger -t kodi-autostart "stopping orphaned $p before starting Kodi"
+            pkill -x "$p" 2>/dev/null
+        fi
+    done
+}
+
 fails=0
 while :; do
+    tidy_orphans
     started=$(date +%s)
     kodi -fs
     rc=$?
