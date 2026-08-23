@@ -48,8 +48,12 @@ sys.modules["xbmcaddon"].Addon = lambda *a, **k: types.SimpleNamespace(
     getAddonInfo=lambda key: "", getSetting=lambda key: "")
 
 sys.argv = ["plugin://plugin.program.retroarch/", "1", ""]
+# realpath, not abspath: tests are symlinked into ~/.local/share/gametests,
+# and abspath would make the repository look like ~/.local/share. The clone
+# can be called anything, so it is located rather than named.
+REPO = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 ldr = importlib.machinery.SourceFileLoader(
-    "pcaddon", os.path.expanduser("~/retro-console/addons/plugin.program.retroarch/main.py"))
+    "pcaddon", os.path.join(REPO, "addons", "plugin.program.retroarch", "main.py"))
 A = importlib.util.module_from_spec(importlib.util.spec_from_loader("pcaddon", ldr))
 ldr.exec_module(A)
 

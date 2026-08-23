@@ -102,7 +102,10 @@ print("\n-- usbip that exists but cannot run is not a sudo problem --")
 # tools for the running kernel it prints a warning and exits 2 -- so it passes
 # every "is it installed" test and still does nothing. That used to surface as
 # "sudo usbip needs a password", sending people to fix the wrong thing.
-real_run, real_exists = U.run, U.os.path.exists
+real_run, real_exists, real_vhci = U.run, U.os.path.exists, U.vhci_loaded
+# The module being loaded is a property of the machine, not of this code, so
+# it is answered here instead of read from /proc.
+U.vhci_loaded = lambda: True
 
 
 def fake_env(present=True, version_rc=0, sudo_rc=0, key=True):
@@ -139,7 +142,7 @@ try:
     check(any("password" in p for p in U.check_client()),
           "a genuine sudo failure is still reported")
 finally:
-    U.run, U.os.path.exists = real_run, real_exists
+    U.run, U.os.path.exists, U.vhci_loaded = real_run, real_exists, real_vhci
 
 print("\nFAILURES: %d" % len(fails))
 sys.exit(1 if fails else 0)

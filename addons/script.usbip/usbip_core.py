@@ -152,6 +152,20 @@ def usbip_usable():
     return True, None
 
 
+def vhci_loaded():
+    """Whether the client half of USB/IP is in the kernel right now.
+
+    Its own function so a test can answer it: reading /proc/modules directly
+    made check_client() depend on the machine running the test, which passed
+    on a box with USB/IP set up and failed on one without.
+    """
+    try:
+        with open("/proc/modules") as handle:
+            return "vhci_hcd" in handle.read()
+    except (IOError, OSError):
+        return True      # cannot tell; do not invent a problem
+
+
 def check_client():
     """What is missing on this side, as a list of human-readable problems."""
     problems = []
@@ -167,12 +181,8 @@ def check_client():
         if rc != 0:
             problems.append(
                 "sudo usbip needs a password -- run usbip-setup-root.sh")
-    try:
-        with open("/proc/modules") as handle:
-            if "vhci_hcd" not in handle.read():
-                problems.append("vhci-hcd module is not loaded")
-    except (IOError, OSError):
-        pass
+    if not vhci_loaded():
+        problems.append("vhci-hcd module is not loaded")
     return problems
 
 
