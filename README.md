@@ -219,6 +219,13 @@ Destinations go in `backup/backup.conf`, one per line — `local:`, `ssh:` or
 a second generation of 200 MB costs about 2 MB, and yesterday's copy of a save
 you have just corrupted is still there. Daily, via `retro-backup.timer`.
 
+Putting one back is `install/restore.sh` (`--list`, `--from DIR`,
+`--dry-run`). It refuses while Kodi or RetroArch are running, keeps whatever
+it replaces in `~/.local/state/restore-<date>`, and rewrites the paths inside
+playlists and `pcgames.json` if the backup came from a different user. A
+backup carries saves, settings and playlists — **not your games**; copy those
+back yourself. See [INSTALL.md](INSTALL.md#restoring-from-a-backup).
+
 ## Tests
 
     <clone>/tests/  →  run any of them with python3

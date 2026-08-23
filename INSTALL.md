@@ -123,6 +123,39 @@ edits the add-on database Kodi holds open and refuses while it is running.
 `install.sh` warns and carries on rather than failing, so you can quit Kodi
 and re-run it afterwards.
 
+## Restoring from a backup
+
+A backup holds what cannot be downloaded again: game saves and save states,
+the playlists, your PC game declarations, hand-kept player counts, Kodi's own
+userdata, and the repository's captured state and secrets. **It does not hold
+your ROMs or your PC games** — those are yours and far too large — unless you
+added `include:` lines to `backup.conf`.
+
+So restoring is two things: install this console normally, then put the backup
+back, then copy your games across yourself.
+
+    install/restore.sh --list        # which generations exist
+    install/restore.sh               # the newest one
+    install/restore.sh --from DIR    # a specific one
+    install/restore.sh --dry-run     # say what it would do, change nothing
+
+**Quit Kodi and RetroArch first.** It refuses to run while either is up, and
+that refusal is the point: both rewrite their own files as they exit, so a
+restore underneath them would be quietly overwritten moments later.
+
+Nothing is thrown away. Whatever was already at those paths is moved to
+`~/.local/state/restore-<date>` before the backup is written over it.
+
+**Restoring onto a different user works.** Playlists and `pcgames.json` hold
+absolute paths, so a backup taken as `retro` names `/home/retro` throughout.
+The restore reads which home the backup came from and rewrites the paths to
+this one — stopping at a path-name boundary, so `/home/retro` inside
+`/home/retro2` is left alone rather than doubled.
+
+Afterwards, copy your ROMs back into `~/Games/emulation/`, run
+`~/.local/bin/sync_games.py` once so the menu is rebuilt from what is actually
+on disk, and start Kodi.
+
 ## Optional extras
 
 None of these are needed to play games.
