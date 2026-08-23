@@ -53,6 +53,35 @@ else
   fi
 fi
 
+# Quake III's data is the one thing here a user has to supply, so say where it
+# goes in the place they will look: the folder itself, created and waiting.
+if [ -x "$Q3DIR/quake3e.x64" ]; then
+  mkdir -p "$HOME/.q3a/baseq3"
+  if [ ! -f "$HOME/.q3a/baseq3/README.txt" ]; then
+    cat > "$HOME/.q3a/baseq3/README.txt" <<'EOF'
+Quake III Arena game data goes in this folder.
+
+    ~/.q3a/baseq3/pak0.pk3      <- from your own copy of the game
+    ~/.q3a/baseq3/pak1.pk3 ... pak8.pk3   (the 1.32 point release)
+
+The engine (Quake3e) is already installed. Only the data is missing, and it
+is commercial -- it is not downloaded for you and is not in the repository.
+Copy the pk3 files from your Quake III CD, your GOG install or your Steam
+install (steamapps/common/Quake 3 Arena/baseq3) into this folder.
+
+pak0.pk3 is about 458 MB and is the one that matters; the rest are the point
+release. QUAKE III stays hidden on the Kodi menu until pak0.pk3 is here, and
+appears on its own once it is -- within ten minutes, or immediately if you
+run ~/.local/bin/sync_games.py.
+EOF
+    ok "wrote $HOME/.q3a/baseq3/README.txt (where your Quake III paks go)"
+  fi
+  if [ ! -f "$HOME/.q3a/baseq3/pak0.pk3" ]; then
+    printf '   --    QUAKE III is hidden until you copy your paks into %s\n' \
+           "$HOME/.q3a/baseq3"
+  fi
+fi
+
 # ------------------------------------------------------------- ET Legacy ---
 ETDIR="$LIB/etlegacy"
 if [ -x "$ETDIR/etl.x86_64" ]; then

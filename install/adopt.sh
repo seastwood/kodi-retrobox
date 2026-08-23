@@ -51,12 +51,12 @@ fi
 # which grep reads as "take input from stdin" and waits there for ever.
 LIST=$(mktemp)
 trap 'rm -f "$LIST"' EXIT
-grep -rlIZ "$OLD" "$REPO" \
+grep -rlIZE "$(printf '%s' "$OLD" | sed -e 's/[][\.*^$|&/]/\\&/g')([^A-Za-z0-9_.-]|\$)" "$REPO" \
      --exclude-dir=.git --exclude-dir=__pycache__ --exclude=home.txt \
      2>/dev/null > "$LIST" || true
 
 count=$(tr -cd '\0' < "$LIST" | wc -c)
-hits=$(xargs -0 -r grep -oh "$OLD" < "$LIST" 2>/dev/null | wc -l)
+hits=$(xargs -0 -r grep -ohE "$(printf '%s' "$OLD" | sed -e 's/[][\.*^$|&/]/\\&/g')([^A-Za-z0-9_.-]|\$)" < "$LIST" 2>/dev/null | wc -l)
 
 echo "baked-in home : $OLD"
 echo "this machine  : $NEW"
@@ -69,13 +69,20 @@ if [ "$CHECK" = 1 ]; then
 fi
 [ "$count" -eq 0 ] && { echo "nothing to do"; exit 0; }
 
-xargs -0 -r sed -i "s|$OLD|$NEW|g" < "$LIST"
+# The replacement has to stop at a path-name boundary. /home/retro is a
+# prefix of /home/retro2, so a plain s|OLD|NEW|g rewrites an already-adopted
+# path a second time and turns /home/retro2 into /home/retro22 -- and since
+# install.sh adopts on every run, that compounds: retro222, retro2222. Match
+# OLD only when what follows it cannot be part of a longer user name.
+TAIL='[^A-Za-z0-9_.-]'
+esc() { printf '%s' "$1" | sed -e 's/[][\.*^$|&/]/\\&/g'; }
+OLD_RE=$(esc "$OLD")
+NEW_RE=$(esc "$NEW")
+xargs -0 -r sed -i -E "s|${OLD_RE}(${TAIL})|${NEW_RE}\1|g; s|${OLD_RE}\$|${NEW_RE}|g" < "$LIST"
 
-left=$(xargs -0 -r grep -oh "$OLD" < "$LIST" 2>/dev/null | wc -l)
-case "$NEW" in
-  "$OLD"*) left=$(( left - $(xargs -0 -r grep -oh "$NEW" < "$LIST" 2>/dev/null | wc -l) )) ;;
-esac
-[ "$left" -lt 0 ] && left=0
+# Count what is genuinely left, using the same boundary: bare "grep -o $OLD"
+# would report every /home/retro2 as an unconverted /home/retro.
+left=$(xargs -0 -r grep -ohE "${OLD_RE}(${TAIL}|\$)" < "$LIST" 2>/dev/null | wc -l)
 # system/home.txt deliberately keeps saying which home the *repository* is
 # written for. Rewriting it to this machine made adopt.sh a one-shot, so any
 # file pulled in later kept the original paths and failed at run time with

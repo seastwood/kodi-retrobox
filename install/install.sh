@@ -72,7 +72,10 @@ BAKED="${BAKED%/}"
 if [ -n "$BAKED" ] && [ "$BAKED" != "${TARGET_HOME%/}" ]; then
   # Every update pulls in files still carrying the repository's own home, so
   # adapting is a normal part of installing rather than a one-off ceremony.
-  if grep -rqs "$BAKED" "$REPO/bin" "$REPO/addons" "$REPO/lib" 2>/dev/null; then
+  # Boundary-aware for the same reason adopt.sh is: without it, /home/retro
+  # is found inside an already-adopted /home/retro2 and every run re-adopts.
+  if grep -rqsE "${BAKED}([^A-Za-z0-9_.-]|\$)" \
+       "$REPO/bin" "$REPO/addons" "$REPO/lib" 2>/dev/null; then
     if [ "$DRY" = 1 ]; then
       skip "would adapt paths from $BAKED to $TARGET_HOME"
     else
