@@ -311,7 +311,7 @@ fi
 # ------------------------------------------------------------------- cores --
 say "Emulator cores"
 if [ "$DRY" = 1 ]; then
-  skip "would download cores listed in system/retroarch-cores.txt"
+  skip "would download the cores listed in system/cores.txt"
 elif [ ! -f "$REPO/system/cores.txt" ]; then
   warn "no system/cores.txt"
 else
@@ -351,7 +351,9 @@ fi
 
 # ----------------------------------------------------------------- systemd --
 say "Timers"
-if [ "$DRY" = 1 ] || [ "$TARGET_HOME" != "$HOME" ]; then
+if [ "$DRY" = 1 ]; then
+  skip "would enable sync-games.timer and retro-backup.timer"
+elif [ "$TARGET_HOME" != "$HOME" ]; then
   skip "not touching systemd (installing into $TARGET_HOME)"
 else
   systemctl --user daemon-reload 2>/dev/null
