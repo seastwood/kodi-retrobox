@@ -13,6 +13,7 @@ in the same order yields the indices to write into
 input_playerN_joypad_index.
 """
 
+import socket
 import json
 import os
 import re
@@ -390,6 +391,37 @@ class HoldBar:
         self.proc = None
 
 
+def netcmd_port():
+    """RetroArch's command port, from its own config."""
+    try:
+        with open(RA_CFG) as handle:
+            for line in handle:
+                if line.strip().startswith("network_cmd_port"):
+                    return int(line.split("=", 1)[1].strip().strip('"'))
+    except (OSError, ValueError):
+        pass
+    return 55355
+
+
+def send_quit():
+    """Ask RetroArch to quit, over the command interface it already exposes.
+
+    RetroArch's own hold-Start combo only listens to player 1. With two pads
+    attached -- two identical controllers over USB/IP here -- holding Start on
+    the second one filled the bar to the end and then nothing happened, because
+    the bar watches every pad and the combo does not. Quitting from here makes
+    the bar mean what it shows, whichever pad is holding it.
+    """
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(1)
+        sock.sendto(b"QUIT", ("127.0.0.1", netcmd_port()))
+        sock.close()
+        return True
+    except OSError:
+        return False
+
+
 def watch_hold_to_exit(stop, bar=None):
     """Narrate the hold-to-exit while a game is running.
 
@@ -414,6 +446,7 @@ def watch_hold_to_exit(stop, bar=None):
         bar = HoldBar()
     held_since = None
     showing = False
+    quit_sent = False
     try:
         while not stop.is_set():
             for dev, starts in pads:
@@ -431,6 +464,7 @@ def watch_hold_to_exit(stop, bar=None):
                                 bar.hide()
                                 showing = False
                             held_since = None
+                            quit_sent = False
                     try:
                         event = dev.read_one()
                     except OSError:
@@ -440,6 +474,8 @@ def watch_hold_to_exit(stop, bar=None):
                 if fraction is not None:
                     bar.show(fraction)
                     showing = True
+                    if fraction >= 1.0 and not quit_sent:
+                        quit_sent = send_quit()
             stop.wait(0.03)
     finally:
         bar.hide()

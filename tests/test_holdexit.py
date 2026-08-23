@@ -101,5 +101,40 @@ check(drawn > 8, "a one-second hold redrew the bar %d times (smooth, not stepped
 check(hid_fast, "letting go hid it immediately, got %r" % (bar.calls[-1:] or None))
 check(full >= 0.99, "a full hold reached the end of the bar, got %r" % full)
 
+print("\n-- the hold has to do the quitting itself --")
+# RetroArch's own hold-Start combo only listens to player 1. With two pads
+# attached, holding Start on the second one filled the bar to the end and then
+# nothing happened, because the bar watches every pad and the combo does not.
+sent = []
+
+
+class _Sock(object):
+    def __init__(self, *a, **k):
+        pass
+
+    def settimeout(self, *a):
+        pass
+
+    def sendto(self, data, addr):
+        sent.append((data, addr))
+
+    def close(self):
+        pass
+
+
+real_socket = m.socket.socket
+m.socket.socket = _Sock
+try:
+    check(m.send_quit() is True, "a quit is sent")
+    check(bool(sent) and sent[0][0] == b"QUIT",
+          "and it is the QUIT command, got %r" % (sent[0][0] if sent else None))
+    check(bool(sent) and sent[0][1][0] == "127.0.0.1",
+          "to the local command interface only, got %r"
+          % (sent[0][1] if sent else None,))
+    check(isinstance(m.netcmd_port(), int),
+          "the port is read from RetroArch's own config")
+finally:
+    m.socket.socket = real_socket
+
 print("\nFAILURES: %d" % len(fails))
 sys.exit(1 if fails else 0)
