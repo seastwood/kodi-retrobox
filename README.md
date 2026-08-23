@@ -153,6 +153,8 @@ JoyShockMapper patch is a modification of MIT-licensed source; both licences
 travel with them. **[NOTICE.md](NOTICE.md)** has the details and lists
 everything that gets downloaded at install time, and from whom.
 
+This repository itself is MIT licensed — see [LICENSE](LICENSE).
+
 **Nothing personal, either.** No credentials, no accounts, no game library:
 this machine's own configuration and secrets are git-ignored and carried by the
 backup instead. Achievements are switched on but have no account attached — add
