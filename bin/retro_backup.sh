@@ -31,10 +31,18 @@ say() { printf '%s %s\n' "$(date +%H:%M:%S)" "$*" | tee -a "$LOG"; }
 # shellcheck disable=SC1090
 GENERATIONS=$(sed -nE 's/^GENERATIONS=([0-9]+).*/\1/p' "$CONF" | tail -1)
 [ -n "$GENERATIONS" ] || GENERATIONS=7
+# The config is read, not sourced, so $HOME in it would be a literal. A
+# leading ~ is expanded here so destinations can be written portably.
+untilde() { case "$1" in "~/"*) printf '%s' "$HOME/${1#\~/}" ;; *) printf '%s' "$1" ;; esac; }
 key=$(sed -nE 's/^SSH_KEY=(.*)/\1/p' "$CONF" | tail -1)
-[ -n "$key" ] && SSH_KEY="$key"
+[ -n "$key" ] && SSH_KEY="$(untilde "$key")"
 
 mapfile -t DESTS < <(grep -E '^(local|ssh|path):' "$CONF" | sed 's/[[:space:]]*$//')
+for i in "${!DESTS[@]}"; do
+  case "${DESTS[$i]}" in
+    *:~/*) DESTS[$i]="${DESTS[$i]%%:*}:$HOME/${DESTS[$i]#*:\~/}" ;;
+  esac
+done
 if [ ${#DESTS[@]} -eq 0 ]; then
   say "no destinations enabled in $CONF - edit it to switch backups on"
   exit 0
@@ -55,7 +63,7 @@ SOURCES=(
 )
 while read -r extra; do
   [ -n "$extra" ] && SOURCES+=("$extra")
-done < <(sed -nE 's/^include:(.*)/\1/p' "$CONF")
+done < <(sed -nE 's/^include:(.*)/\1/p' "$CONF" | sed "s|^~/|$HOME/|")
 
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT

@@ -30,15 +30,15 @@ MAX_PLAYERS = 4                  # slots for an ordinary session
 MAX_PLAYERS_BIG = 8              # ... and once there are more devices than that
 RETROARCH = "/usr/bin/retroarch"
 # Repairs retroarch.cfg if a previous exit wrote something that cannot start.
-GUARD = "/home/retro/.local/bin/ra_guard.py"
+GUARD = os.path.expanduser("~/.local/bin/ra_guard.py")
 KODI_SEND = "/usr/bin/kodi-send"
 # Everything RetroArch said on the last launch. The Kodi plugin throws the
 # child's output away, so without this a failure leaves no trace anywhere.
-LAUNCH_LOG = "/home/retro/.local/state/retroarch/last-launch.log"
+LAUNCH_LOG = os.path.expanduser("~/.local/state/retroarch/last-launch.log")
 # What the screen blanking was set to before a game turned it off. Written to
 # disk because a `finally` does not run when the process is killed outright,
 # and the screen would then never blank again.
-SAVER_STATE = "/home/retro/.local/state/retroarch/screensaver.json"
+SAVER_STATE = os.path.expanduser("~/.local/state/retroarch/screensaver.json")
 # RetroArch quits when Start is held for two seconds (HOLD_BTN_DELAY_SEC) and
 # shows nothing at all while it happens, so a game about to close looks exactly
 # like one that has stopped responding.
@@ -47,12 +47,12 @@ SAVER_STATE = "/home/retro/.local/state/retroarch/screensaver.json"
 # *queue*, each entry shown for a fixed three seconds, so a countdown became a
 # stack of notifications playing one after another and "cancelled" arrived
 # several seconds after letting go. This draws its own bar instead.
-HOLDBAR = "/home/retro/.local/bin/ra_holdbar.py"
+HOLDBAR = os.path.expanduser("~/.local/bin/ra_holdbar.py")
 HOLD_SECONDS = 2.0               # what RetroArch itself waits for
 HOLD_GRACE = 0.45                # Start is an ordinary in-game button: draw
                                  # nothing until the hold is clearly deliberate
-RA_CFG = "/home/retro/.config/retroarch/retroarch.cfg"
-PIXEL_FONT = "/home/retro/.local/share/fonts/PressStart2P.ttf"
+RA_CFG = os.path.expanduser("~/.config/retroarch/retroarch.cfg")
+PIXEL_FONT = os.path.expanduser("~/.local/share/fonts/PressStart2P.ttf")
 
 # 8-bit palette, matching the Kodi front end
 BG = (16, 14, 40)
@@ -682,7 +682,7 @@ def keyboard_binds():
 # click. RetroArch ships ~400 udev profiles that say what each button really
 # is; they are the profiles the game itself will use, so reading them keeps
 # this screen and the game in agreement as well as making it correct.
-AUTOCONFIG_DIRS = ("/home/retro/.config/retroarch/autoconfig",
+AUTOCONFIG_DIRS = (os.path.expanduser("~/.config/retroarch/autoconfig"),
                    "/usr/share/libretro/autoconfig")
 UDEV_NUM_BUTTONS = 64            # udev_joypad.c's own cap
 

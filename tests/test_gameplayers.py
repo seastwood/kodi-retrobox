@@ -12,7 +12,7 @@ import sys
 import tempfile
 
 sys.argv = ["x"]
-loader = importlib.machinery.SourceFileLoader("sg", "/home/retro/.local/bin/sync_games.py")
+loader = importlib.machinery.SourceFileLoader("sg", os.path.expanduser("~/.local/bin/sync_games.py"))
 m = importlib.util.module_from_spec(importlib.util.spec_from_loader("sg", loader))
 loader.exec_module(m)
 

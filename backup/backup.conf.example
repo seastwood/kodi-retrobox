@@ -8,7 +8,7 @@
 #
 # Nothing is enabled until at least one line is uncommented.
 
-# local:/home/retro/backups
+# local:~/backups
 # ssh:piuser@192.0.2.10:/srv/retro-backup
 # path:/mnt/nas/retro-backup
 
@@ -16,8 +16,8 @@
 GENERATIONS=7
 
 # Key used for ssh: destinations.
-SSH_KEY=/home/retro/.ssh/id_ed25519_usbip
+SSH_KEY=~/.ssh/id_ed25519_usbip
 
 # Extra directories to include, one per line, prefixed with "include:".
 # The defaults below are always included; these are for anything else.
-# include:/home/retro/Games/emulation/sega-genesis
+# include:~/Games/emulation/sega-genesis

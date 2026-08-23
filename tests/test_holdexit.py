@@ -4,6 +4,7 @@ The bar is driven through an injected sink here, so this tests the timing and
 the responsiveness without needing a display. It also drives the real watcher
 with a synthetic controller, which is what proves the evdev half works.
 """
+import os
 import importlib.machinery
 import importlib.util
 import sys
@@ -11,7 +12,7 @@ import threading
 import time
 
 sys.argv = ["x"]
-ldr = importlib.machinery.SourceFileLoader("rp", "/home/retro/.local/bin/ra_players.py")
+ldr = importlib.machinery.SourceFileLoader("rp", os.path.expanduser("~/.local/bin/ra_players.py"))
 m = importlib.util.module_from_spec(importlib.util.spec_from_loader("rp", ldr))
 ldr.exec_module(m)
 import evdev

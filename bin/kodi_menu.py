@@ -8,15 +8,15 @@ import subprocess
 from urllib.parse import urlencode
 from xml.sax.saxutils import escape
 
-PL = "/home/retro/.local/share/retroarch/plists"
-ICON = "/home/retro/.kodi/media/consoles"
+PL = os.path.expanduser("~/.local/share/retroarch/plists")
+ICON = os.path.expanduser("~/.kodi/media/consoles")
 SKINICON = "special://skin/extras/icons/"
-SS = "/home/retro/.kodi/userdata/addon_data/script.skinshortcuts"
-PCGAMES = "/home/retro/.local/share/pcgames.json"
-PLAYERS = "/home/retro/.local/share/gameplayers.json"
-LASTGAME = "/home/retro/.local/state/retroarch/last-game.json"
-RECENT = "/home/retro/.local/state/retroarch/recent.json"
-FAVOURITES = "/home/retro/.local/share/gamefavourites.json"
+SS = os.path.expanduser("~/.kodi/userdata/addon_data/script.skinshortcuts")
+PCGAMES = os.path.expanduser("~/.local/share/pcgames.json")
+PLAYERS = os.path.expanduser("~/.local/share/gameplayers.json")
+LASTGAME = os.path.expanduser("~/.local/state/retroarch/last-game.json")
+RECENT = os.path.expanduser("~/.local/state/retroarch/recent.json")
+FAVOURITES = os.path.expanduser("~/.local/share/gamefavourites.json")
 
 SHORT = {
     "Nintendo - Super Nintendo Entertainment System": "SNES",

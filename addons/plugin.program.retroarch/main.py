@@ -12,30 +12,30 @@ import xbmcplugin
 BASE = sys.argv[0]
 HANDLE = int(sys.argv[1])
 
-PLAYLIST_DIR = "/home/retro/.local/share/retroarch/plists"
-THUMB_DIR = "/home/retro/.local/share/retroarch/thumbnails"
+PLAYLIST_DIR = os.path.expanduser("~/.local/share/retroarch/plists")
+THUMB_DIR = os.path.expanduser("~/.local/share/retroarch/thumbnails")
 # Player-assignment screen; it execs RetroArch once pads are claimed.
-PICKER = "/home/retro/.local/bin/ra_players.py"
+PICKER = os.path.expanduser("~/.local/bin/ra_players.py")
 # Native PC games (not RetroArch content) are described here.
-PCGAMES = "/home/retro/.local/share/pcgames.json"
+PCGAMES = os.path.expanduser("~/.local/share/pcgames.json")
 # Shown when a PC game has no artwork of its own.
-PC_FALLBACK_ART = "/home/retro/.kodi/media/consoles/_pcgames.png"
+PC_FALLBACK_ART = os.path.expanduser("~/.kodi/media/consoles/_pcgames.png")
 # Wrapper that handles window focus and returning to Kodi afterwards.
-PC_LAUNCHER = "/home/retro/.local/bin/pcgame_launch.py"
+PC_LAUNCHER = os.path.expanduser("~/.local/bin/pcgame_launch.py")
 # How many players each game takes, written by sync_games.py from the libretro
 # databases plus the hand-kept overrides beside it.
-PLAYERS = "/home/retro/.local/share/gameplayers.json"
+PLAYERS = os.path.expanduser("~/.local/share/gameplayers.json")
 # Hand-kept counts. This is the file the Kodi editor writes and the one
 # sync_games.py treats as beating the database.
-PLAYERS_MANUAL = "/home/retro/.local/share/gameplayers.manual.json"
-SYSTEM_DIR = "/home/retro/.local/share/retroarch/system"
+PLAYERS_MANUAL = os.path.expanduser("~/.local/share/gameplayers.manual.json")
+SYSTEM_DIR = os.path.expanduser("~/.local/share/retroarch/system")
 # The last game started, so CONTINUE on the home screen has something to open.
-LAST_GAME = "/home/retro/.local/state/retroarch/last-game.json"
+LAST_GAME = os.path.expanduser("~/.local/state/retroarch/last-game.json")
 # The last dozen games played, newest first, and the ones marked as keepers.
-RECENT = "/home/retro/.local/state/retroarch/recent.json"
+RECENT = os.path.expanduser("~/.local/state/retroarch/recent.json")
 RECENT_MAX = 12
-FAVOURITES = "/home/retro/.local/share/gamefavourites.json"
-SHADER_DIR = "/home/retro/.local/share/retroarch/shaders"
+FAVOURITES = os.path.expanduser("~/.local/share/gamefavourites.json")
+SHADER_DIR = os.path.expanduser("~/.local/share/retroarch/shaders")
 # A CRT filter on a television console looks right; on a handheld it is simply
 # wrong -- a Game Boy screen never had scanlines. Anything not listed gets the
 # default, and "" means no filter at all.

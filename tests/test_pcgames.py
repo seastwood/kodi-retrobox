@@ -21,7 +21,7 @@ sys.modules["xbmcaddon"].Addon = lambda *a, **k: types.SimpleNamespace(
 
 sys.argv = ["plugin://plugin.program.retroarch/", "1", ""]
 ldr = importlib.machinery.SourceFileLoader(
-    "pcaddon", "/home/retro/retro-console/addons/plugin.program.retroarch/main.py")
+    "pcaddon", os.path.expanduser("~/retro-console/addons/plugin.program.retroarch/main.py"))
 A = importlib.util.module_from_spec(importlib.util.spec_from_loader("pcaddon", ldr))
 ldr.exec_module(A)
 

@@ -16,8 +16,8 @@ import os
 import shutil
 import sys
 
-CFG = "/home/retro/.config/retroarch/retroarch.cfg"
-GOOD = "/home/retro/.local/state/retroarch/retroarch.cfg.known-good"
+CFG = os.path.expanduser("~/.config/retroarch/retroarch.cfg")
+GOOD = os.path.expanduser("~/.local/state/retroarch/retroarch.cfg.known-good")
 
 # Values known to work on this machine. `sdl2` is absent from video_driver on
 # purpose: it segfaults during video init on this GPU.

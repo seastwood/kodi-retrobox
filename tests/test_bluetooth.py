@@ -6,10 +6,11 @@ is plugged in, and must never touch a real pairing.
 import importlib.machinery
 import importlib.util
 import sys
+import os
 
 sys.argv = ["x"]
 ldr = importlib.machinery.SourceFileLoader(
-    "bt", "/home/retro/.kodi/addons/script.bluetooth/bt_core.py")
+    "bt", os.path.expanduser("~/.kodi/addons/script.bluetooth/bt_core.py"))
 bt = importlib.util.module_from_spec(importlib.util.spec_from_loader("bt", ldr))
 ldr.exec_module(bt)
 

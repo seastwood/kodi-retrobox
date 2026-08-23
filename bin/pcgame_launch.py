@@ -117,14 +117,14 @@ def set_mode(geom):
                        check=False, stderr=subprocess.DEVNULL)
 
 
-JSM_BIN = "/home/retro/.local/lib/joyshockmapper/JoyShockMapper"
-HUD_BIN = "/home/retro/.local/bin/jsm-hud"
+JSM_BIN = os.path.expanduser("~/.local/lib/joyshockmapper/JoyShockMapper")
+HUD_BIN = os.path.expanduser("~/.local/bin/jsm-hud")
 # Used when a game names no config of its own. Every PC game gets a controller
 # mapping and the on-screen reference, not just the ones somebody has written a
 # config for: a new game is playable with a pad the moment it is added, and the
 # HUD is there to show what the buttons do and to change them.
-JSM_GAMES = "/home/retro/.config/JoyShockMapper/games"
-DEFAULT_JSM = "/home/retro/.config/JoyShockMapper/games/_default.txt"
+JSM_GAMES = os.path.expanduser("~/.config/JoyShockMapper/games")
+DEFAULT_JSM = os.path.expanduser("~/.config/JoyShockMapper/games/_default.txt")
 
 
 def resolve_jsm(name, game_id=None):

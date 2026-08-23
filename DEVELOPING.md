@@ -4,14 +4,25 @@ Notes for working on this repository rather than installing from it.
 
 ## adopt.sh
 
-Absolute paths are baked into the code — it was written on a machine whose user
-is `retro`, which is invisible there and fatal anywhere else. `adopt.sh`
-rewrites them, and `system/home.txt` records which home the code currently
-points at.
+**The code no longer contains a home directory.** Python resolves its own paths
+with `os.path.expanduser("~/...")`, shell uses `$HOME`, systemd units use `%h`,
+and the two Kodi files that expand none of those — `kodi.desktop` and the skin
+settings — carry an `@HOME@` placeholder that the installer fills in. So there
+is nothing in the repository for a different username to break.
 
-Nothing needs remembering when installing: `install.sh` compares `home.txt`
-against `$HOME` and runs `adopt.sh` itself, on a fresh install and again after
-any update that pulls in files still carrying the old home.
+What `adopt.sh` is still for is **captured state**: `local/` and `state/` hold
+this machine's playlists, `pcgames.json` and Kodi settings, and those contain
+real absolute paths because RetroArch and Kodi wrote them. Restoring a backup
+onto a different user needs them rewritten. `system/home.txt` records which
+home that captured state was written for, and `install.sh` runs `adopt.sh`
+itself when it differs from `$HOME`.
+
+**It must be safe to run twice**, because `install.sh` runs it every time. The
+old home can be a *prefix* of the new one, so the match stops at a path-name
+boundary — otherwise adopting to a name ending in `2` doubles the user name,
+and doubles it again on the next install. `tests/test_adopt.py` covers exactly
+that, and builds its homes from parts so the script under test cannot rewrite
+its own fixtures.
 
     install/adopt.sh --check     report what would change, touch nothing
     install/adopt.sh /home/bob   adopt to a specific home

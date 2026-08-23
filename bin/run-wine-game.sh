@@ -31,7 +31,7 @@
 set -e
 DIR="$1"; shift
 EXE="$1"; shift
-export WINEPREFIX="${WINEPREFIX:-/home/retro/.local/share/wine/wc3}"
+export WINEPREFIX="${WINEPREFIX:-$HOME/.local/share/wine/wc3}"
 export WINEARCH=win32
 export WINEDEBUG=-all
 export DISPLAY="${DISPLAY:-:0}"

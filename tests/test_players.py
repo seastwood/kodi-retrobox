@@ -10,7 +10,7 @@ import sys
 import tempfile
 
 sys.argv = ["x"]
-loader = importlib.machinery.SourceFileLoader("rp", "/home/retro/.local/bin/ra_players.py")
+loader = importlib.machinery.SourceFileLoader("rp", os.path.expanduser("~/.local/bin/ra_players.py"))
 m = importlib.util.module_from_spec(importlib.util.spec_from_loader("rp", loader))
 loader.exec_module(m)
 

@@ -17,7 +17,7 @@ import sys
 import xbmc
 import xbmcgui
 
-sys.path.insert(0, "/home/retro/.local/lib/jsmconfig")
+sys.path.insert(0, os.path.expanduser("~/.local/lib/jsmconfig"))
 from jsmconfig import *          # noqa: F401,F403  -- the shared config layer
 import jsmconfig
 

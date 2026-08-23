@@ -28,7 +28,7 @@ os.environ["SDL_WINDOW_NO_ACTIVATION_WHEN_SHOWN"] = "1"
 import pygame
 from pygame._sdl2.video import Window, Renderer, Texture
 
-FONT = "/home/retro/.local/share/fonts/PressStart2P.ttf"
+FONT = os.path.expanduser("~/.local/share/fonts/PressStart2P.ttf")
 HEIGHT = 104
 BG = (16, 14, 40)
 EDGE = (255, 62, 165)

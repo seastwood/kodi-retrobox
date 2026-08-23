@@ -276,7 +276,11 @@ say "Starting Kodi at login"
 if [ -f "$TARGET_HOME/.config/autostart/kodi.desktop" ]; then
   skip "already set to start at login"
 elif [ -f "$REPO/templates/kodi.desktop" ]; then
+  # .desktop files expand neither ~ nor $HOME in Exec=, so the template
+  # carries @HOME@ and the real path is filled in here.
   copy_new "$REPO/templates/kodi.desktop" "$TARGET_HOME/.config/autostart/kodi.desktop"
+  [ "$DRY" = 1 ] || sed -i "s|@HOME@|$TARGET_HOME|g" \
+    "$TARGET_HOME/.config/autostart/kodi.desktop" 2>/dev/null
   ok "Kodi will start at login (kodi-autostart.sh restarts it if it crashes)"
 else
   warn "no autostart template; Kodi will not start on its own"

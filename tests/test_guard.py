@@ -21,8 +21,8 @@ def load(name, path):
     return mod
 
 
-g = load("guard", "/home/retro/.local/bin/ra_guard.py")
-rp = load("rp", "/home/retro/.local/bin/ra_players.py")
+g = load("guard", os.path.expanduser("~/.local/bin/ra_guard.py"))
+rp = load("rp", os.path.expanduser("~/.local/bin/ra_players.py"))
 
 fails = []
 
@@ -111,7 +111,7 @@ check(rp.player_slots([object()] * 6, 2) == 2, "but the game still decides")
 print("-- what the player is told when a launch fails --")
 log = os.path.join(tempfile.gettempdir(), "diag.log")
 open(log, "w").write('[libretro ERROR] Unable to open CD BIOS: '
-                     '"/home/retro/.local/share/retroarch/system/bios_CD_U.bin".\n')
+                     'os.path.expanduser("~/.local/share/retroarch/system/bios_CD_U.bin").\n')
 check(rp.diagnose(log, 1, 2.0) == "Missing BIOS file: bios_CD_U.bin",
       "the missing BIOS is named, got %r" % rp.diagnose(log, 1, 2.0))
 open(log, "w").write("RetroArch [ERROR] :: Failed to load content\n")

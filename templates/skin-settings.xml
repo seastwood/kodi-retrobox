@@ -252,7 +252,7 @@
     <setting id="591.seasons.disableoverlay" type="string"></setting>
     <setting id="themebordercolor" type="string">FF46E8F4</setting>
     <setting id="widget.back" type="string"></setting>
-    <setting id="customdefaultbackground.path" type="string">/home/retro/.kodi/media/backgrounds/</setting>
+    <setting id="customdefaultbackground.path" type="string">@HOME@/.kodi/media/backgrounds/</setting>
     <setting id="53.Movies.InfoPanel" type="string"></setting>
     <setting id="509.notopbar" type="string"></setting>
     <setting id="59.tv.viewflags" type="string"></setting>

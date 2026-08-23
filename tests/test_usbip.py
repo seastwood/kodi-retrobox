@@ -6,10 +6,11 @@ sequence, which is the whole of what was wrong before.
 import importlib.machinery
 import importlib.util
 import sys
+import os
 
 sys.argv = ["x"]
 ldr = importlib.machinery.SourceFileLoader(
-    "u", "/home/retro/.kodi/addons/script.usbip/usbip_core.py")
+    "u", os.path.expanduser("~/.kodi/addons/script.usbip/usbip_core.py"))
 U = importlib.util.module_from_spec(importlib.util.spec_from_loader("u", ldr))
 ldr.exec_module(U)
 

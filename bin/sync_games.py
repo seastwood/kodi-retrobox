@@ -15,21 +15,21 @@ import sys
 import urllib.parse
 import urllib.request
 
-ROMS = "/home/retro/Games/emulation"
-PLDIR = "/home/retro/.local/share/retroarch/plists"
-COREDIR = "/home/retro/.local/lib/retroarch/cores"
+ROMS = os.path.expanduser("~/Games/emulation")
+PLDIR = os.path.expanduser("~/.local/share/retroarch/plists")
+COREDIR = os.path.expanduser("~/.local/lib/retroarch/cores")
 INFODIR = "/usr/share/libretro/info"
-THUMBS = "/home/retro/.local/share/retroarch/thumbnails"
-ICONS = "/home/retro/.kodi/media/consoles"
+THUMBS = os.path.expanduser("~/.local/share/retroarch/thumbnails")
+ICONS = os.path.expanduser("~/.kodi/media/consoles")
 XMB = "/usr/share/libretro/assets/xmb/dot-art/png"
 BASE = "https://thumbnails.libretro.com"
 ART = ["Named_Boxarts", "Named_Snaps", "Named_Titles"]
-STATE = "/home/retro/.local/state/sync_games.json"
+STATE = os.path.expanduser("~/.local/state/sync_games.json")
 # How many people can play each game, for the Kodi front end. The first is
 # written by this script; the second is hand-kept and always wins.
 RDB = "/usr/share/libretro/database/rdb"
-PLAYERS = "/home/retro/.local/share/gameplayers.json"
-PLAYERS_MANUAL = "/home/retro/.local/share/gameplayers.manual.json"
+PLAYERS = os.path.expanduser("~/.local/share/gameplayers.json")
+PLAYERS_MANUAL = os.path.expanduser("~/.local/share/gameplayers.manual.json")
 
 # Symlinked into ~/.local/bin, so resolve the link before walking up: the
 # repository is wherever the real file is, whatever the folder is called.
@@ -822,7 +822,7 @@ def sync_icons():
 
 
 def rebuild_menu():
-    subprocess.run([sys.executable, "/home/retro/.local/bin/kodi_menu.py"], check=False)
+    subprocess.run([sys.executable, os.path.expanduser("~/.local/bin/kodi_menu.py")], check=False)
 
 
 def game_running():

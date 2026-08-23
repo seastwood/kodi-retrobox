@@ -175,7 +175,17 @@ fi
 
 # ------------------------------------------------------- skin settings -------
 say "Skin settings"
-SKIN_CONF="$REPO/templates/skin-settings.conf"
+# Kodi stores these as plain paths and expands nothing, so the templates
+# carry @HOME@ and it is resolved into a working copy here rather than in the
+# repository, which must stay machine-independent.
+fill_home() {   # fill_home <template> -> prints a temp file with @HOME@ resolved
+  local out; out="$(mktemp)"
+  sed "s|@HOME@|$HOME|g" "$1" > "$out"
+  printf '%s' "$out"
+}
+
+SKIN_CONF_SRC="$REPO/templates/skin-settings.conf"
+[ -f "$SKIN_CONF_SRC" ] && SKIN_CONF="$(fill_home "$SKIN_CONF_SRC")" || SKIN_CONF="$SKIN_CONF_SRC"
 SKIN_DATA="$KODI/userdata/addon_data/$SKIN"
 if [ ! -f "$SKIN_CONF" ]; then
   skip "no skin settings template"
@@ -185,7 +195,7 @@ else
   # keys in an otherwise empty file does not survive -- the skin came up and
   # asked about backgrounds anyway. Lay down the complete set first; that is
   # what the look actually is, and the keys then stick.
-  FULL="$REPO/templates/skin-settings.xml"
+  FULL="$(fill_home "$REPO/templates/skin-settings.xml")"
   have=$(grep -c "<setting" "$SKIN_DATA/settings.xml" 2>/dev/null || echo 0)
   if [ -f "$FULL" ] && [ "$have" -lt 100 ]; then
     cp "$FULL" "$SKIN_DATA/settings.xml"
