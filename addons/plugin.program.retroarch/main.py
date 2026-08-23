@@ -512,8 +512,12 @@ def pc_games(all_declared=False):
 def list_pc_games():
     xbmcplugin.setPluginCategory(HANDLE, "PC Games")
     xbmcplugin.setContent(HANDLE, "games")
-    for game in pc_games():
-        exe = (game.get("exec") or [""])[0]
+    # Sorted here rather than by Kodi, so the games stay alphabetical
+    # while ADD GAME stays pinned at the end instead of sorting into
+    # the middle of them.
+    for game in sorted(pc_games(),
+                       key=lambda g: g.get("name", g["id"]).lower()):
+        exe = os.path.expanduser((game.get("exec") or [""])[0])
         if not exe or not os.path.exists(exe):
             continue
         item = xbmcgui.ListItem(label=game.get("name", game["id"]))
@@ -527,8 +531,104 @@ def list_pc_games():
         item.setProperty("IsPlayable", "false")
         target = url(pcgame=game["id"])
         xbmcplugin.addDirectoryItem(HANDLE, target, item, False)
-    xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_LABEL)
+
+    # Sorting is applied before this is added, so ADD GAME stays last instead
+    # of sorting into the middle of the games under "A".
+    xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_UNSORTED)
+    add = xbmcgui.ListItem(label="[+]  ADD GAME")
+    add.setInfo("game", {"title": "Add Game", "platform": "PC"})
+    if os.path.exists(PC_FALLBACK_ART):
+        add.setArt({"thumb": PC_FALLBACK_ART, "poster": PC_FALLBACK_ART,
+                    "icon": PC_FALLBACK_ART})
+    add.setProperty("IsPlayable", "false")
+    xbmcplugin.addDirectoryItem(HANDLE, url(addpcgame=1), add, False)
     xbmcplugin.endOfDirectory(HANDLE)
+
+
+PC_ROOT = os.path.expanduser("~/Games/pc")
+WINE_RUNNER = os.path.expanduser("~/.local/bin/run-wine-game.sh")
+
+
+def _slug(text, taken):
+    """A short id from the game's name, unique among the ones already used."""
+    base = "".join(c.lower() if c.isalnum() else "-" for c in text)
+    base = "-".join(part for part in base.split("-") if part)[:24] or "game"
+    candidate, n = base, 2
+    while candidate in taken:
+        candidate, n = "%s-%d" % (base, n), n + 1
+    return candidate
+
+
+def add_pc_game():
+    """Add a PC game from the television, with a controller.
+
+    Everything here is answerable with a pad: Kodi's file browser navigates
+    with the d-pad and its keyboard is on-screen. The point is that adding a
+    game never requires going and editing pcgames.json by hand.
+    """
+    dialog = xbmcgui.Dialog()
+    start = PC_ROOT if os.path.isdir(PC_ROOT) else os.path.expanduser("~")
+    chosen = dialog.browse(1, "Choose the game's program file", "files",
+                           "", False, False, start)
+    if not chosen or not os.path.isfile(chosen):
+        return
+    folder = os.path.dirname(chosen)
+
+    suggested = os.path.splitext(os.path.basename(chosen))[0]
+    if suggested.lower() in ("game", "start", "launch", "run", "bin"):
+        suggested = os.path.basename(folder)      # a generic name says nothing
+    name = dialog.input("Name for the menu", suggested.replace("_", " ").upper())
+    if not name:
+        return
+
+    games = pc_games(all_declared=True)
+    entry = {"id": _slug(name, {g.get("id") for g in games}),
+             "name": name, "cwd": folder, "window": name.split()[0]}
+
+    if chosen.lower().endswith(".exe"):
+        # Windows games go through the Wine runner, which takes the folder and
+        # the executable separately.
+        if not os.path.exists(WINE_RUNNER):
+            dialog.ok("Add Game", "This is a Windows program, but Wine support "
+                                  "is not installed.\n\nRe-run install.sh "
+                                  "with --with-optional.")
+            return
+        entry["exec"] = [WINE_RUNNER, folder, os.path.basename(chosen)]
+    else:
+        if not os.access(chosen, os.X_OK):
+            try:
+                os.chmod(chosen, os.stat(chosen).st_mode | 0o111)
+            except OSError:
+                dialog.ok("Add Game", "That file is not executable and could "
+                                      "not be made executable.")
+                return
+        entry["exec"] = [chosen]
+
+    entry["stop_kodi"] = bool(dialog.yesno(
+        "Add Game", "Close Kodi while [B]%s[/B] runs?\n\n"
+                    "Choose Yes unless the game is happy to share the screen."
+        % name, nolabel="No", yeslabel="Yes"))
+
+    games.append(entry)
+    try:
+        with open(PCGAMES, "w") as fh:
+            json.dump({"games": games}, fh, indent=2)
+    except OSError as err:
+        dialog.ok("Add Game", "Could not save: %s" % err)
+        return
+
+    # Rebuild the home menu so the PC GAMES count is right straight away.
+    try:
+        subprocess.call([os.path.expanduser("~/.local/bin/kodi_menu.py")])
+    except OSError:
+        pass
+
+    mapping = os.path.expanduser(
+        "~/.config/JoyShockMapper/games/%s.txt" % entry["id"])
+    dialog.notification("Added", "%s%s" % (
+        name, "" if os.path.exists(mapping) else " (default pad mapping)"),
+        xbmcgui.NOTIFICATION_INFO)
+    xbmc.executebuiltin("Container.Refresh")
 
 
 def launch_pc(game_id):
@@ -581,6 +681,8 @@ def main():
         list_by_players(args["players"])
     elif args.get("pcgames"):
         list_pc_games()
+    elif args.get("addpcgame"):
+        add_pc_game()
     elif args.get("pcgame"):
         launch_pc(args["pcgame"])
     elif args.get("open"):

@@ -96,9 +96,23 @@ names the missing file on the television.
 ### PC games
 
 `~/Games/emulation` is for emulated consoles; `~/Games/pc/` is for everything
-else. Nothing there is scanned -- a PC game is whatever you say it is, declared
-in `~/.local/share/pcgames.json`, which documents its own fields. They appear
-in Kodi behind the PC GAMES entry.
+else. A PC game is whatever you say it is, declared in
+`~/.local/share/pcgames.json`, which documents its own fields. They appear in
+Kodi behind the PC GAMES entry.
+
+**You do not have to edit that file.** The last tile behind PC GAMES is
+**ADD GAME**: it opens Kodi's file browser at `~/Games/pc`, you pick the
+program, name it, and say whether Kodi should close while it runs. A `.exe` is
+wired up through Wine automatically. All of it works with a controller — the
+browser takes the d-pad and the keyboard is on-screen — so a game can be added
+from the sofa.
+
+`install.sh --with-optional` also installs two open-source engines. **ET
+Legacy** arrives complete: Wolfenstein: Enemy Territory is freeware, so the
+engine and its game data are both fetched and it is playable immediately.
+**Quake3e** is the engine only — Quake III Arena's data is commercial, so you
+supply your own `pak0.pk3`. It is declared straight away and stays hidden until
+you do, which is what the `requires` field is for.
 
 You rarely need to name a mapping: the game's id finds it (`bf2` →
 `games/bf2.txt`), and anything without one of its own still gets
