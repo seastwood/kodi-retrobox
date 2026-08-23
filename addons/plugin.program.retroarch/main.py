@@ -195,7 +195,7 @@ def list_systems():
                          "thumb": cover.get("thumb", "")})
         item.setLabel2("%d games" % len(items))
         xbmcplugin.addDirectoryItem(HANDLE, url(system=system), item, True)
-    xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_LABEL)
+    add_sync_item()
     xbmcplugin.endOfDirectory(HANDLE)
 
 
@@ -529,6 +529,13 @@ def list_pc_games():
         if art and os.path.exists(art):
             item.setArt({"thumb": art, "poster": art, "icon": art})
         item.setProperty("IsPlayable", "false")
+        # Adding a game from the television is no use without a way back out
+        # of it: the menu button on the pad opens this.
+        item.addContextMenuItems([
+            ("Remove from PC Games",
+             "RunPlugin(%s)" % url(removepcgame=game["id"])),
+            ("Rename", "RunPlugin(%s)" % url(renamepcgame=game["id"])),
+        ])
         target = url(pcgame=game["id"])
         xbmcplugin.addDirectoryItem(HANDLE, target, item, False)
 
@@ -542,7 +549,101 @@ def list_pc_games():
                     "icon": PC_FALLBACK_ART})
     add.setProperty("IsPlayable", "false")
     xbmcplugin.addDirectoryItem(HANDLE, url(addpcgame=1), add, False)
+    add_sync_item()
     xbmcplugin.endOfDirectory(HANDLE)
+
+
+def add_sync_item():
+    """A "look for new games now" tile.
+
+    The sync runs on a timer every ten minutes, which is fine when you walk
+    away and wrong when you are standing there having just copied something in.
+    """
+    item = xbmcgui.ListItem(label="[~]  SYNC GAMES")
+    item.setInfo("game", {"title": "Sync Games", "platform": "PC"})
+    if os.path.exists(PC_FALLBACK_ART):
+        item.setArt({"thumb": PC_FALLBACK_ART, "poster": PC_FALLBACK_ART,
+                     "icon": PC_FALLBACK_ART})
+    item.setProperty("IsPlayable", "false")
+    xbmcplugin.addDirectoryItem(HANDLE, url(syncgames=1), item, False)
+
+
+def write_pc_games(games):
+    try:
+        with open(PCGAMES, "w") as fh:
+            json.dump({"games": games}, fh, indent=2)
+    except OSError as err:
+        xbmcgui.Dialog().ok("PC Games", "Could not save: %s" % err)
+        return False
+    try:
+        subprocess.call([os.path.expanduser("~/.local/bin/kodi_menu.py")])
+    except OSError:
+        pass
+    return True
+
+
+def remove_pc_game(game_id):
+    games = pc_games(all_declared=True)
+    game = next((g for g in games if g.get("id") == game_id), None)
+    if not game:
+        return
+    name = game.get("name", game_id)
+    if not xbmcgui.Dialog().yesno(
+            "Remove from PC Games",
+            "Remove [B]%s[/B] from the menu?\n\n"
+            "Only this entry goes. The game itself is left on disk." % name,
+            nolabel="Keep", yeslabel="Remove"):
+        return
+    if write_pc_games([g for g in games if g.get("id") != game_id]):
+        xbmcgui.Dialog().notification("Removed", name,
+                                      xbmcgui.NOTIFICATION_INFO)
+        xbmc.executebuiltin("Container.Refresh")
+
+
+def rename_pc_game(game_id):
+    games = pc_games(all_declared=True)
+    game = next((g for g in games if g.get("id") == game_id), None)
+    if not game:
+        return
+    new = xbmcgui.Dialog().input("Name for the menu", game.get("name", game_id))
+    if not new or new == game.get("name"):
+        return
+    # The id stays put: it is what finds the controller mapping, and changing
+    # it would silently drop the game back to the default pad layout.
+    game["name"] = new
+    if write_pc_games(games):
+        xbmcgui.Dialog().notification("Renamed", new, xbmcgui.NOTIFICATION_INFO)
+        xbmc.executebuiltin("Container.Refresh")
+
+
+def sync_games_now():
+    """Run the sync the timer would have run, and say what it found."""
+    sync = os.path.expanduser("~/.local/bin/sync_games.py")
+    if not os.path.exists(sync):
+        xbmcgui.Dialog().ok("Sync Games", "sync_games.py is not installed.")
+        return
+    progress = xbmcgui.DialogProgressBG()
+    progress.create("Games", "Looking for new games")
+    try:
+        done = subprocess.run([sync], stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, timeout=900)
+        out = done.stdout.decode("utf-8", "replace")
+    except (OSError, subprocess.SubprocessError) as err:
+        progress.close()
+        xbmcgui.Dialog().ok("Sync Games", "The sync did not run: %s" % err)
+        return
+    progress.close()
+    # Its last useful line is the summary; a failure is worth showing in full.
+    lines = [l for l in out.splitlines() if l.strip()]
+    if done.returncode != 0:
+        xbmcgui.Dialog().textviewer("Sync Games", out or "no output",
+                                    usemono=True)
+    else:
+        summary = next((l for l in reversed(lines)
+                        if l.startswith("menu ")), lines[-1] if lines else "done")
+        xbmcgui.Dialog().notification("Sync", summary,
+                                      xbmcgui.NOTIFICATION_INFO)
+    xbmc.executebuiltin("Container.Refresh")
 
 
 PC_ROOT = os.path.expanduser("~/Games/pc")
@@ -610,18 +711,8 @@ def add_pc_game():
         % name, nolabel="No", yeslabel="Yes"))
 
     games.append(entry)
-    try:
-        with open(PCGAMES, "w") as fh:
-            json.dump({"games": games}, fh, indent=2)
-    except OSError as err:
-        dialog.ok("Add Game", "Could not save: %s" % err)
+    if not write_pc_games(games):
         return
-
-    # Rebuild the home menu so the PC GAMES count is right straight away.
-    try:
-        subprocess.call([os.path.expanduser("~/.local/bin/kodi_menu.py")])
-    except OSError:
-        pass
 
     mapping = os.path.expanduser(
         "~/.config/JoyShockMapper/games/%s.txt" % entry["id"])
@@ -683,6 +774,12 @@ def main():
         list_pc_games()
     elif args.get("addpcgame"):
         add_pc_game()
+    elif args.get("removepcgame"):
+        remove_pc_game(args["removepcgame"])
+    elif args.get("renamepcgame"):
+        rename_pc_game(args["renamepcgame"])
+    elif args.get("syncgames"):
+        sync_games_now()
     elif args.get("pcgame"):
         launch_pc(args["pcgame"])
     elif args.get("open"):

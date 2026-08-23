@@ -100,12 +100,19 @@ else. A PC game is whatever you say it is, declared in
 `~/.local/share/pcgames.json`, which documents its own fields. They appear in
 Kodi behind the PC GAMES entry.
 
-**You do not have to edit that file.** The last tile behind PC GAMES is
-**ADD GAME**: it opens Kodi's file browser at `~/Games/pc`, you pick the
-program, name it, and say whether Kodi should close while it runs. A `.exe` is
-wired up through Wine automatically. All of it works with a controller — the
-browser takes the d-pad and the keyboard is on-screen — so a game can be added
-from the sofa.
+**You do not have to edit that file.** The last tiles behind PC GAMES are
+**ADD GAME** and **SYNC GAMES**. Add opens Kodi's file browser at `~/Games/pc`,
+you pick the program, name it, and say whether Kodi should close while it runs;
+a `.exe` is wired up through Wine automatically. The menu button on any game
+offers **Remove** and **Rename** — remove takes the entry off the menu and
+leaves the game on disk, and rename keeps the id, since the id is what finds
+the controller mapping.
+
+All of it works with a controller — the browser takes the d-pad and the
+keyboard is on-screen — so games can be added, renamed and removed from the
+sofa. **SYNC GAMES** runs the scan that otherwise happens on a ten-minute
+timer, which is what you want when you have just copied something in and are
+standing there; it sits on the consoles screen too.
 
 `install.sh --with-optional` also installs two open-source engines. **ET
 Legacy** arrives complete: Wolfenstein: Enemy Territory is freeware, so the

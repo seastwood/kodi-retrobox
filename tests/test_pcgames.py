@@ -16,6 +16,34 @@ for name in ("xbmc", "xbmcgui", "xbmcplugin", "xbmcaddon", "xbmcvfs"):
     mod = types.ModuleType(name)
     mod.__getattr__ = lambda attr: (lambda *a, **k: None)     # any call is a no-op
     sys.modules.setdefault(name, mod)
+
+# Answers the stubbed dialogs give, and what they were asked.
+ANSWERS = {"yesno": True, "input": "RENAMED"}
+ASKED = []
+
+
+class _Dialog(object):
+    def yesno(self, title, message, *a, **k):
+        ASKED.append(message)
+        return ANSWERS["yesno"]
+
+    def input(self, *a, **k):
+        return ANSWERS["input"]
+
+    def notification(self, *a, **k):
+        pass
+
+    def ok(self, *a, **k):
+        pass
+
+    def textviewer(self, *a, **k):
+        pass
+
+
+sys.modules["xbmcgui"].Dialog = _Dialog
+sys.modules["xbmcgui"].NOTIFICATION_INFO = 0
+sys.modules["xbmcgui"].NOTIFICATION_ERROR = 1
+sys.modules["xbmc"].executebuiltin = lambda *a, **k: None
 sys.modules["xbmcaddon"].Addon = lambda *a, **k: types.SimpleNamespace(
     getAddonInfo=lambda key: "", getSetting=lambda key: "")
 
@@ -80,6 +108,47 @@ check(A._slug("QUAKE III", {"quake-iii", "quake-iii-2"}) == "quake-iii-3",
       "and keeps counting")
 check(A._slug("!!!", set()) == "game", "a name with nothing usable still yields an id")
 check(len(A._slug("x" * 80, set())) <= 26, "an absurd name is trimmed")
+
+
+print("\n-- removing an entry added by mistake --")
+# kodi_menu.py is stubbed out: a test must not rebuild the real home menu.
+A.subprocess.call = lambda *a, **k: 0
+store = os.path.join(tmp, "pcgames.json")
+A.PCGAMES = store
+
+
+def write(*ids):
+    import json as _j
+    _j.dump({"games": [{"id": i, "name": i.upper(), "exec": [exe]} for i in ids]},
+            open(store, "w"))
+
+
+def ids():
+    import json as _j
+    return [g["id"] for g in _j.load(open(store))["games"]]
+
+
+write("keep", "bad")
+ANSWERS["yesno"] = False
+A.remove_pc_game("bad")
+check(ids() == ["keep", "bad"], "answering Keep removes nothing")
+
+ANSWERS["yesno"] = True
+A.remove_pc_game("bad")
+check(ids() == ["keep"], "answering Remove drops only that entry, got %r" % ids())
+check(any("left on disk" in m for m in ASKED),
+      "and the prompt promises the game itself is not deleted")
+
+A.remove_pc_game("nosuch")
+check(ids() == ["keep"], "removing an id that is not there does nothing")
+
+print("\n-- renaming --")
+A.rename_pc_game("keep")
+import json as _json
+renamed = _json.load(open(store))["games"][0]
+check(renamed["name"] == "RENAMED", "the label changes")
+check(renamed["id"] == "keep",
+      "but the id does not -- the id is what finds the pad mapping")
 
 print("\nFAILURES: %d" % len(fails))
 sys.exit(1 if fails else 0)
