@@ -35,6 +35,7 @@ can be built again on other hardware.
     system/      what to install: packages, PPAs, cores, BIOS notes, units
     install/     install.sh, adopt.sh, deploy.sh, capture.sh
     backup/      backup.conf.example - copy to backup.conf and edit
+    docs         INSTALL.md, NOTICE.md, DEVELOPING.md
     local/       this machine's own state (git ignores it)
     secrets/     this machine's credentials (git ignores it)
 
@@ -135,26 +136,28 @@ server the usbip tools, a running `usbipd`, and passwordless sudo for its own
 `command -v usbip` on that machine. Check setup inside the add-on lists the
 same three steps.
 
-### adopt.sh
+## What is not in here
 
-Absolute paths are baked into the code — it was written on a machine whose user
-is `retro`. That is invisible there and fatal anywhere else, so `adopt.sh`
-rewrites them. There is nothing to remember: `install.sh` notices the mismatch
-and runs it for you, on a fresh install and again after any update that pulls
-in files still carrying the old home. `adopt.sh --check` reports what would
-change without touching anything.
+**No games, and no BIOS files.** Not one ROM, disc image or BIOS dump — those
+are the copyright of the people who made them, and you supply your own.
+`system/bios-required.txt` is a list of filenames, nothing more.
 
-## Nothing personal is in here
+**No box art and no console logos either.** Box art is fetched from
+`thumbnails.libretro.com` when a game is identified, and console logos are
+manufacturers' trademarks, so neither is redistributed here. A fresh install
+shows console entries without a logo until you add your own.
 
-No credentials, no accounts, no game library. `install/capture.sh` snapshots
-this machine's configuration into `local/` and its credentials into `secrets/`,
-both of which git ignores; the backup carries them, and a restore needs a
-backup as well as a clone. What ships is the definition — code, package lists,
-settings template — which is why a stranger can start from it.
+The artwork that *is* here — the menu icons and the background — is generated
+pixel art. The one font is under the SIL Open Font License, and the
+JoyShockMapper patch is a modification of MIT-licensed source; both licences
+travel with them. **[NOTICE.md](NOTICE.md)** has the details and lists
+everything that gets downloaded at install time, and from whom.
 
-Achievements are switched on but have no account attached; add yours in
-RetroArch's own menu. Backups are switched off until you name a destination in
-`backup/backup.conf`.
+**Nothing personal, either.** No credentials, no accounts, no game library:
+this machine's own configuration and secrets are git-ignored and carried by the
+backup instead. Achievements are switched on but have no account attached — add
+yours in RetroArch's own menu. Backups are switched off until you name a
+destination in `backup/backup.conf`.
 
 ## Backups
 
@@ -169,29 +172,11 @@ you have just corrupted is still there. Daily, via `retro-backup.timer`.
 
 223 checks covering the button mapping, the player picker, the sync pipeline,
 the config guard, the hold-to-exit feedback, Bluetooth pairing and USB/IP. They
-use synthetic devices and fake ROM trees, so they touch nothing real.
+use synthetic devices and fake ROM trees, so they touch nothing real, and
+`install.sh` runs them as its last phase.
 
-## State of testing
+## Working on it
 
-Built from nothing on a clean Linux Mint 22.3 virtual machine and played: wipe
-the home directory, clone, `adopt.sh`, one `install.sh` (52 seconds), drop a
-Mega Drive ROM into `~/Games/emulation/sega-genesis/`, and the game appears on
-the Kodi home menu with box art and a player count and launches with the CRT
-filter on.
-
-Doing that found eight things no amount of testing on the original machine
-could have, every one of them silent: a PPA name stripped twice, an apt failure
-reported as success, a config-repair heuristic that called a brand new config
-broken, Kodi never being started at login, every add-on needing approval by
-hand, the skin never being fetched, and -- the two that made a working install
-look like an empty one -- `content_database_path` and `libretro_info_path`
-never being set, so RetroArch scanned a folder of games, recognised nothing,
-and wrote no playlist without complaining.
-
-What remains untested is a controller: the virtual machine has no pads, so the
-player picker and the hold-to-exit bar are proven only on the original machine.
-
-## Hardware it grew up on
-
-An AMD Phenom II with a Radeon RX 470, Linux Mint 22.3 (Ubuntu 24.04 noble).
-Nothing is specific to that beyond the driver choices in the settings template.
+[DEVELOPING.md](DEVELOPING.md) covers `adopt.sh`, `capture.sh`, what a
+from-nothing install on a clean virtual machine has proved so far, and what
+remains untested.

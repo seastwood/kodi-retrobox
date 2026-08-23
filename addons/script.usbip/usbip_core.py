@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
 """USB/IP command layer, shared by the Kodi screen and the reattach service.
 
-This is the part carried over from usb-audio-ip-client: the same four usbip
-calls and the same output parsing, with paramiko swapped for the ssh CLI
-(Kodi's Python has no paramiko) and passwords swapped for a key.
+The approach -- which four usbip calls to make, and on which side -- was
+learned from reading usb-audio-ip-client, a PyQt tool by another author. None
+of its code is here: that one drives usbip over paramiko with passwords and
+parses the output by splitting strings, this one shells out to the ssh client
+(Kodi's Python has no paramiko), authenticates with a key, and parses with the
+regexes below. Commands are facts; the expression is ours.
 
 Which side runs what:
 
