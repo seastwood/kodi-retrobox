@@ -178,9 +178,10 @@ are the copyright of the people who made them, and you supply your own.
 `system/bios-required.txt` is a list of filenames, nothing more.
 
 **No box art and no console logos either.** Box art is fetched from
-`thumbnails.libretro.com` when a game is identified, and console logos are
-manufacturers' trademarks, so neither is redistributed here. A fresh install
-shows console entries without a logo until you add your own.
+`thumbnails.libretro.com` when a game is identified, and console icons are
+copied from RetroArch's own XMB assets (the `retroarch-assets` package) the
+first time a system gets a playlist. Both arrive from their own publishers on
+your machine; neither is redistributed here.
 
 The artwork that *is* here — the menu icons and the background — is generated
 pixel art. The one font is under the SIL Open Font License, and the
