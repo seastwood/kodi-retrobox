@@ -567,6 +567,86 @@ def add_sync_item():
     item.setProperty("IsPlayable", "false")
     xbmcplugin.addDirectoryItem(HANDLE, url(syncgames=1), item, False)
 
+    opts = xbmcgui.ListItem(label="[=]  SETTINGS")
+    opts.setInfo("game", {"title": "Settings", "platform": "PC"})
+    if os.path.exists(PC_FALLBACK_ART):
+        opts.setArt({"thumb": PC_FALLBACK_ART, "poster": PC_FALLBACK_ART,
+                     "icon": PC_FALLBACK_ART})
+    opts.setProperty("IsPlayable", "false")
+    xbmcplugin.addDirectoryItem(HANDLE, url(settings=1), opts, False)
+
+
+# --------------------------------------------------------------- settings --
+AUTOSTART = os.path.expanduser("~/.config/autostart/kodi.desktop")
+AUTOSTART_SRC = os.path.expanduser("~/.local/share/retrobox/kodi.desktop.off")
+NO_RESTART = os.path.expanduser("~/.config/retrobox-no-restart")
+
+
+def autostart_on():
+    return os.path.exists(AUTOSTART)
+
+
+def set_autostart(on):
+    """Kodi starting at login is just a .desktop file, so the toggle keeps a
+    copy aside rather than trying to regenerate one it never wrote."""
+    try:
+        if on:
+            if os.path.exists(AUTOSTART_SRC):
+                os.makedirs(os.path.dirname(AUTOSTART), exist_ok=True)
+                with open(AUTOSTART_SRC) as src, open(AUTOSTART, "w") as dst:
+                    dst.write(src.read())
+                return True
+            return False
+        if os.path.exists(AUTOSTART):
+            os.makedirs(os.path.dirname(AUTOSTART_SRC), exist_ok=True)
+            with open(AUTOSTART) as src, open(AUTOSTART_SRC, "w") as dst:
+                dst.write(src.read())
+            os.remove(AUTOSTART)
+        return True
+    except OSError:
+        return False
+
+
+def settings_screen():
+    """The handful of things about this console worth changing from the sofa.
+
+    Everything here is a file on disk rather than a setting inside Kodi,
+    because what it controls happens outside Kodi -- before it starts, and
+    while it is not running.
+    """
+    while True:
+        restart = not os.path.exists(NO_RESTART)
+        rows = [
+            "Start Kodi at login:  %s" % ("ON" if autostart_on() else "off"),
+            "Restart Kodi if it crashes:  %s" % ("ON" if restart else "off"),
+            "Run the game sync now",
+            "Close",
+        ]
+        pick = xbmcgui.Dialog().select("Settings", rows)
+        if pick in (-1, 3):
+            return
+        if pick == 0:
+            wanted = not autostart_on()
+            if not set_autostart(wanted):
+                xbmcgui.Dialog().ok(
+                    "Settings",
+                    "Could not change that.\n\nThere is no saved copy of the "
+                    "autostart entry to put back; run install.sh again to "
+                    "restore it.")
+        elif pick == 1:
+            try:
+                if restart:
+                    with open(NO_RESTART, "w") as handle:
+                        handle.write(
+                            "kodi-autostart.sh checks for this file.\n")
+                elif os.path.exists(NO_RESTART):
+                    os.remove(NO_RESTART)
+            except OSError:
+                pass
+        elif pick == 2:
+            sync_games_now()
+            return
+
 
 def write_pc_games(games):
     try:
@@ -825,6 +905,8 @@ def main():
         rename_pc_game(args["renamepcgame"])
     elif args.get("syncgames"):
         sync_games_now()
+    elif args.get("settings"):
+        settings_screen()
     elif args.get("pcgame"):
         launch_pc(args["pcgame"])
     elif args.get("open"):

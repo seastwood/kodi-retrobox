@@ -7,6 +7,7 @@ waits for it to finish, then hands focus back to Kodi. It also refuses to
 start a second copy, which previously left several instances stacked up.
 """
 
+import atexit
 import argparse
 import os
 import re
@@ -424,8 +425,31 @@ def reopen_kodi_joysticks():
             time.sleep(2)
 
 
+# While this exists, kodi-autostart.sh must not put Kodi back. Killing Kodi
+# makes it exit non-zero, which is indistinguishable from a crash, so without
+# this the supervisor restarted Kodi three seconds later -- on top of the game
+# that had just asked for the screen.
+KODI_HOLD = os.path.join(os.path.expanduser("~/.local/state"), "kodi-hold")
+
+
+def hold_kodi(on):
+    try:
+        if on:
+            os.makedirs(os.path.dirname(KODI_HOLD), exist_ok=True)
+            with open(KODI_HOLD, "w") as handle:
+                handle.write("%d\n" % os.getpid())
+        elif os.path.exists(KODI_HOLD):
+            os.remove(KODI_HOLD)
+    except OSError:
+        pass
+
+
 def stop_kodi():
     """Shut Kodi down. Note pkill -x: a -f pattern would match this process."""
+    hold_kodi(True)
+    # Belt as well as braces: the supervisor also notices a dead holder, but
+    # an ordinary exit should not depend on it doing so.
+    atexit.register(lambda: hold_kodi(False))
     subprocess.run(["pkill", "-x", "kodi.bin"], check=False)
     time.sleep(6)
     subprocess.run(["pkill", "-9", "-x", "kodi.bin"], check=False)
@@ -440,8 +464,17 @@ def start_kodi():
     hand while a stop_kodi game was running, the unconditional restart at the
     end of the game would add another.
     """
+    hold_kodi(False)
     if subprocess.run(["pgrep", "-x", "kodi.bin"], stdout=subprocess.DEVNULL,
                       stderr=subprocess.DEVNULL, check=False).returncode == 0:
+        return False
+    # If the supervisor is alive it is waiting on the hold and will start Kodi
+    # itself, with the crash handling intact. Starting one here as well would
+    # give two Kodis fighting over the display -- and would also leave the
+    # session without a supervisor, so a later crash would not be caught.
+    if subprocess.run(["pgrep", "-x", "kodi-autostart."],
+                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                      check=False).returncode == 0:
         return False
     env = dict(os.environ)
     env.setdefault("DISPLAY", ":0")

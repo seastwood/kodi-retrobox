@@ -281,6 +281,13 @@ elif [ -f "$REPO/templates/kodi.desktop" ]; then
   copy_new "$REPO/templates/kodi.desktop" "$TARGET_HOME/.config/autostart/kodi.desktop"
   [ "$DRY" = 1 ] || sed -i "s|@HOME@|$TARGET_HOME|g" \
     "$TARGET_HOME/.config/autostart/kodi.desktop" 2>/dev/null
+  # A copy the SETTINGS screen can put back after you switch autostart off.
+  # Without it the toggle is one-way, which is worse than not having it.
+  if [ "$DRY" != 1 ]; then
+    mkdir -p "$TARGET_HOME/.local/share/retrobox"
+    cp -f "$TARGET_HOME/.config/autostart/kodi.desktop" \
+       "$TARGET_HOME/.local/share/retrobox/kodi.desktop.off" 2>/dev/null
+  fi
   ok "Kodi will start at login (kodi-autostart.sh restarts it if it crashes)"
 else
   warn "no autostart template; Kodi will not start on its own"
