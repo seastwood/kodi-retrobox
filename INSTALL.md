@@ -18,18 +18,19 @@ Once it is finished none of this needs a keyboard. Getting there does.
 ## 1. Clone the repository
 
     sudo apt install -y git
-    git clone https://github.com/seastwood/kodi-retrobox ~/retro-console
+    git clone https://github.com/seastwood/kodi-retrobox ~/kodi-retrobox
 
-**It has to be `~/retro-console`.** Your *username* does not matter — step 2
-deals with that — but the folder name is referred to from inside the code.
+Anywhere will do, under any name — every script resolves its own location, so
+`~/kodi-retrobox` is only tidiness. Your username does not matter either; step
+2 deals with that.
 
 ## 2. Run the installer
 
-    ~/retro-console/install/install.sh
+    ~/kodi-retrobox/install/install.sh
 
 or, if you want Windows and native PC games as well:
 
-    ~/retro-console/install/install.sh --with-optional
+    ~/kodi-retrobox/install/install.sh --with-optional
 
 It asks for your sudo password early, to install packages, and then runs
 unattended.
@@ -109,7 +110,7 @@ a controller, so it needs no keyboard either.
 yours in RetroArch's own menu. Nothing in this repository carries credentials.
 
 **USB over IP** borrows a controller plugged into another machine. Run
-`sudo ~/retro-console/bin/usbip-setup-root.sh` once; see the *USB over IP*
+`sudo ~/kodi-retrobox/bin/usbip-setup-root.sh` once; see the *USB over IP*
 section of the README for the two steps that follow.
 
 **Backups** do nothing until you name a destination in `backup/backup.conf`.

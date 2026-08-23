@@ -12,7 +12,9 @@
 # so anyone can start from it; this captures the *state* so its owner can
 # restore it from a backup.
 set -u
-R="$HOME/retro-console"
+# Same rule as deploy.sh: the repository is where this script is, so the
+# clone can be called anything.
+R="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 L="$R/local"
 mkdir -p "$L/plists" "$L/kodi" "$R/system" "$R/secrets"
 

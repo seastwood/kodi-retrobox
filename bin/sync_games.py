@@ -31,7 +31,10 @@ RDB = "/usr/share/libretro/database/rdb"
 PLAYERS = "/home/retro/.local/share/gameplayers.json"
 PLAYERS_MANUAL = "/home/retro/.local/share/gameplayers.manual.json"
 
-SYSTEMS_TSV = "/home/retro/retro-console/system/systems.tsv"
+# Symlinked into ~/.local/bin, so resolve the link before walking up: the
+# repository is wherever the real file is, whatever the folder is called.
+_REPO = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+SYSTEMS_TSV = os.path.join(_REPO, "system", "systems.tsv")
 BUILDBOT = "https://buildbot.libretro.com/nightly/linux/x86_64/latest"
 
 # Cores chosen deliberately for these systems; they win over the generated

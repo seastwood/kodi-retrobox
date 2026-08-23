@@ -3,4 +3,4 @@ Description=Back up game saves and the console definition
 
 [Service]
 Type=oneshot
-ExecStart=/home/retro/retro-console/bin/retro_backup.sh
+ExecStart=%h/.local/bin/retro_backup.sh

@@ -42,15 +42,16 @@ can be built again on other hardware.
 ## Installing
 
     sudo apt install -y git                   # a stock Mint 22 has no git
-    git clone https://github.com/seastwood/kodi-retrobox ~/retro-console
-    ~/retro-console/install/install.sh
+    git clone https://github.com/seastwood/kodi-retrobox ~/kodi-retrobox
+    ~/kodi-retrobox/install/install.sh
 
 Then log out and back in, and put your games in `~/Games/emulation/`. That is
 the whole process — **[INSTALL.md](INSTALL.md) walks through it step by step**,
 including BIOS files, what the output means when a phase fails, and the
 optional extras.
 
-The clone has to be at `~/retro-console`; your username does not matter.
+The clone can go anywhere and be called anything — every script works out
+where it lives. Your username does not matter either.
 
 For Windows and native PC games as well, use `install.sh --with-optional`:
 that adds Wine and builds JoyShockMapper (see *PC games* below).
@@ -112,7 +113,7 @@ say) over the network, so a pad in another room shows up here as a local USB
 device. Everything the add-on does needs root, which it cannot arrange for
 itself, so run this once:
 
-    sudo ~/retro-console/bin/usbip-setup-root.sh
+    sudo ~/kodi-retrobox/bin/usbip-setup-root.sh
 
 It installs the tools, loads `vhci-hcd` and makes that permanent, and grants
 the user passwordless sudo for the `usbip` binary alone. Re-running it is
@@ -170,7 +171,7 @@ you have just corrupted is still there. Daily, via `retro-backup.timer`.
 
 ## Tests
 
-    ~/retro-console/tests/  →  run any of them with python3
+    <clone>/tests/  →  run any of them with python3
 
 223 checks covering the button mapping, the player picker, the sync pipeline,
 the config guard, the hold-to-exit feedback, Bluetooth pairing and USB/IP. They

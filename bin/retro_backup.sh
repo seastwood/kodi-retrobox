@@ -11,7 +11,10 @@
 # generations of a 46 MB save directory cost almost nothing but a corrupted
 # save can still be rolled back to yesterday.
 set -u
-R="$HOME/retro-console"
+# The repository is wherever this file actually lives, not a folder of a
+# particular name. It is symlinked into ~/.local/bin, so resolve the link
+# first and then walk up out of bin/.
+R="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 CONF="$R/backup/backup.conf"
 LOG="$HOME/.local/state/retro-backup.log"
 # Seconds included: two runs in the same minute would otherwise be the same
