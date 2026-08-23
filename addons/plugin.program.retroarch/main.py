@@ -567,14 +567,6 @@ def add_sync_item():
     item.setProperty("IsPlayable", "false")
     xbmcplugin.addDirectoryItem(HANDLE, url(syncgames=1), item, False)
 
-    opts = xbmcgui.ListItem(label="[=]  SETTINGS")
-    opts.setInfo("game", {"title": "Settings", "platform": "PC"})
-    if os.path.exists(PC_FALLBACK_ART):
-        opts.setArt({"thumb": PC_FALLBACK_ART, "poster": PC_FALLBACK_ART,
-                     "icon": PC_FALLBACK_ART})
-    opts.setProperty("IsPlayable", "false")
-    xbmcplugin.addDirectoryItem(HANDLE, url(settings=1), opts, False)
-
 
 # --------------------------------------------------------------- settings --
 AUTOSTART = os.path.expanduser("~/.config/autostart/kodi.desktop")
@@ -605,6 +597,121 @@ def set_autostart(on):
         return True
     except OSError:
         return False
+
+
+# The add-on is symlinked into ~/.kodi/addons, so realpath -- abspath would
+# put the repository somewhere inside .kodi.
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.realpath(__file__))))
+UPDATE_SH = os.path.join(REPO, "install", "update.sh")
+BACKUP_SH = os.path.expanduser("~/.local/bin/retro_backup.sh")
+BACKUP_CONF = os.path.join(REPO, "backup", "backup.conf")
+
+
+def backup_configured():
+    """Whether backup.conf names a destination, rather than only examples."""
+    try:
+        with open(BACKUP_CONF) as handle:
+            for line in handle:
+                line = line.strip()
+                if line and not line.startswith("#") and line.split(":")[0] in (
+                        "local", "ssh", "path"):
+                    return True
+    except OSError:
+        pass
+    return False
+
+
+def run_backup():
+    if not os.path.exists(BACKUP_SH):
+        xbmcgui.Dialog().ok("Backup", "retro_backup.sh is not installed.")
+        return False
+    if not backup_configured():
+        xbmcgui.Dialog().ok(
+            "Backup",
+            "No backup destination is set, so a backup would do nothing.\n\n"
+            "Add one to backup/backup.conf first -- backup.conf.example "
+            "explains the three kinds.")
+        return False
+    progress = xbmcgui.DialogProgressBG()
+    progress.create("Backup", "Copying saves and settings")
+    try:
+        done = subprocess.run([BACKUP_SH], stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, timeout=3600)
+    except (OSError, subprocess.SubprocessError) as err:
+        progress.close()
+        xbmcgui.Dialog().ok("Backup", "The backup did not run: %s" % err)
+        return False
+    progress.close()
+    out = done.stdout.decode("utf-8", "replace")
+    if done.returncode != 0:
+        xbmcgui.Dialog().textviewer("Backup failed", out or "no output",
+                                    usemono=True)
+        return False
+    tail = [l for l in out.splitlines() if l.strip()]
+    xbmcgui.Dialog().notification("Backup", tail[-1] if tail else "done",
+                                  xbmcgui.NOTIFICATION_INFO)
+    return True
+
+
+def update_system():
+    """Pull the latest version and re-run the install.
+
+    The warning is not ceremony. An update replaces every script this console
+    runs, and while your games and saves live outside the repository and are
+    not touched, a bad update is much easier to sit out if there is a backup
+    of the settings and playlists to go back to.
+    """
+    if not os.path.exists(UPDATE_SH):
+        xbmcgui.Dialog().ok("Update", "update.sh was not found at\n%s"
+                            % UPDATE_SH)
+        return
+
+    have = backup_configured()
+    choice = xbmcgui.Dialog().select(
+        "Update this console", [
+            "Back up first, then update" + ("" if have else "  (not configured)"),
+            "Update without backing up",
+            "Cancel",
+        ])
+    if choice in (-1, 2):
+        return
+    if choice == 0 and not run_backup():
+        if not xbmcgui.Dialog().yesno(
+                "Update", "The backup did not happen.\n\nUpdate anyway?",
+                nolabel="Stop", yeslabel="Update"):
+            return
+
+    if not xbmcgui.Dialog().yesno(
+            "Update this console",
+            "This replaces the code with the latest version from GitHub.\n\n"
+            "Your games, saves and settings are outside the repository and "
+            "are not touched.\n\nKodi should be restarted afterwards.",
+            nolabel="Cancel", yeslabel="Update"):
+        return
+
+    progress = xbmcgui.DialogProgressBG()
+    progress.create("Update", "Fetching and installing")
+    try:
+        done = subprocess.run([UPDATE_SH, "--yes"], stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, timeout=3600)
+    except (OSError, subprocess.SubprocessError) as err:
+        progress.close()
+        xbmcgui.Dialog().ok("Update", "The update did not run: %s" % err)
+        return
+    progress.close()
+    out = done.stdout.decode("utf-8", "replace")
+    if done.returncode != 0:
+        xbmcgui.Dialog().textviewer("Update finished with problems", out,
+                                    usemono=True)
+        return
+    now = ""
+    for line in out.splitlines():
+        if "now at" in line:
+            now = line.strip()
+    xbmcgui.Dialog().ok(
+        "Update done", "%s\n\nRestart Kodi to pick up the new version."
+        % (now or "Updated."))
 
 
 STUCK = ["JoyShockMapper", "jsm-hud", "Baldur.exe", "BF2.exe", "bf1942.exe",
@@ -660,10 +767,11 @@ def settings_screen():
             "Restart Kodi if it crashes:  %s" % ("ON" if restart else "off"),
             "Run the game sync now",
             "Stop a game that will not close",
+            "Update this console",
             "Close",
         ]
         pick = xbmcgui.Dialog().select("Settings", rows)
-        if pick in (-1, 4):
+        if pick in (-1, 5):
             return
         if pick == 0:
             wanted = not autostart_on()
@@ -688,6 +796,9 @@ def settings_screen():
             return
         elif pick == 3:
             stop_stuck_game()
+        elif pick == 4:
+            update_system()
+            return
 
 
 def write_pc_games(games):

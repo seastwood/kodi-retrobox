@@ -171,6 +171,21 @@ server the usbip tools, a running `usbipd`, and passwordless sudo for its own
 `command -v usbip` on that machine. Check setup inside the add-on lists the
 same three steps.
 
+## Settings
+
+A **SETTINGS** entry on the home menu, because none of what it controls is
+about any one game:
+
+* **Start Kodi at login** and **restart Kodi if it crashes** — both are files
+  on disk rather than Kodi settings, since what they control happens before
+  Kodi starts and while it is not running.
+* **Run the game sync now**, instead of waiting for the ten-minute timer.
+* **Stop a game that will not close** — lists what is actually running and
+  stops it, including a controller mapper left behind by a game that ended
+  badly, which otherwise types into the menu.
+* **Update this console** — offers to back up first, says plainly what an
+  update does and does not touch, and asks again before doing it.
+
 ## What is not in here
 
 **No games, and no BIOS files.** Not one ROM, disc image or BIOS dump — those

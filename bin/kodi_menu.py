@@ -186,6 +186,15 @@ def build():
     out.append(sc("retroarch", "RETROARCH",
                   "RunPlugin(plugin://plugin.program.retroarch/?open=1)",
                   SKINICON + "DefaultAddonGame.png"))
+
+    # Settings belongs on the home menu, not behind PC GAMES: none of what it
+    # controls is about PC games.
+    icon = os.path.join(ICON, "_settings.png")
+    if not os.path.exists(icon):
+        icon = SKINICON + "DefaultAddonProgram.png"
+    out.append(sc("settings", "SETTINGS",
+                  "RunPlugin(plugin://plugin.program.retroarch/?%s)" % urlencode({"settings": "1"}),
+                  icon, "console options"))
     out.append("</shortcuts>\n")
     return "".join(out), n
 
