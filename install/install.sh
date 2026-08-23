@@ -377,6 +377,15 @@ if [ "$WITH_OPTIONAL" = 1 ]; then
   else
     warn "joyshockmapper.sh is missing"
   fi
+  # The two open-source engines. Separate script because it downloads a few
+  # hundred megabytes and is worth being able to run on its own.
+  if [ "$DRY" = 1 ]; then
+    skip "would install Quake3e and ET Legacy"
+  elif [ -x "$HERE/pcengines.sh" ]; then
+    "$HERE/pcengines.sh" 2>&1 | sed 's/^/  /'
+  else
+    warn "pcengines.sh is missing"
+  fi
 fi
 
 # -------------------------------------------------------------------- kodi --

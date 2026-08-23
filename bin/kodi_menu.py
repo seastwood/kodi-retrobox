@@ -148,7 +148,9 @@ def build():
                    if (g.get("exec") or [""])[0]
                    and os.path.exists(os.path.expanduser(g["exec"][0]))
                    and (not g.get("cwd")
-                        or os.path.isdir(os.path.expanduser(g["cwd"])))]
+                        or os.path.isdir(os.path.expanduser(g["cwd"])))
+                   and (not g.get("requires")
+                        or os.path.exists(os.path.expanduser(g["requires"])))]
     except (OSError, ValueError):
         pcs = []
     if pcs:

@@ -480,6 +480,13 @@ def game_installed(game):
     honest test there, and exec[0] is the honest test for a native game -- so
     check whichever of the two is declared.
     """
+    # An engine can be installed while the game it plays is not. Quake3e is
+    # the case that matters: the binary is here, the commercial paks are the
+    # user's to supply, and a tile that launches into an error is worse than
+    # no tile. "requires" names the file that settles it.
+    needs = game.get("requires")
+    if needs and not os.path.exists(os.path.expanduser(needs)):
+        return False
     cwd = game.get("cwd")
     if cwd and not os.path.isdir(os.path.expanduser(cwd)):
         return False
