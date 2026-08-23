@@ -5,8 +5,17 @@ downloading.
 
 ## What you need
 
-* **Linux Mint 22 or Ubuntu 24.04** (`noble`). The installer warns and carries
-  on elsewhere, but nothing else has been tested.
+* **An Ubuntu 24.04 `noble` base with XFCE, on x86_64** — Linux Mint 22.x
+  XFCE (built and used on 22.3), Xubuntu 24.04, or Ubuntu 24.04 with XFCE.
+  The installer tests the codename, not the distribution name.
+
+  On a different release it warns and carries on, but the libretro PPA and the
+  WineHQ repository are keyed to the codename, so most of the install will
+  fail. On a different desktop it is untested: the launcher makes specific use
+  of `xfwm4` and the exit bar is drawn over the XFCE panel.
+
+  Mint 22.3 XFCE is the one this runs on daily. Xubuntu 24.04 has had every
+  package checked for availability but no full install.
 * A normal user account **with sudo**. Do not run any of this as root.
 * Network, and around **1 GB** of downloads: 138 MB of emulator cores, 59 MB of
   shaders, the rest packages. `--with-optional` adds Wine and a compiler and is

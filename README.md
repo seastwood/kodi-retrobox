@@ -1,9 +1,26 @@
 # kodi-retrobox
 
-A Linux Mint / XFCE machine turned into a games console: Kodi as the front end,
-RetroArch behind it, a player-picker before every game, achievements, backups,
-and a test suite. This repository is the whole definition, so the same console
-can be built again on other hardware.
+An XFCE machine turned into a games console: Kodi as the front end, RetroArch
+behind it, a player-picker before every game, achievements, backups, and a
+test suite. This repository is the whole definition, so the same console can
+be built again on other hardware.
+
+**Requires Ubuntu 24.04 "noble" or something built on it, with XFCE, on
+x86_64.** In practice that means:
+
+| | |
+| --- | --- |
+| **Linux Mint 22.x XFCE** | what this was built on and runs on daily — 22, 22.1, 22.2, 22.3 |
+| **Xubuntu 24.04** | every dependency verified available; not yet installed end to end |
+| **Ubuntu 24.04 + XFCE** | the same thing under another name |
+
+The installer checks the release codename rather than the distribution name,
+so anything with a `noble` base is accepted. On anything else it warns and
+carries on — the libretro PPA and the WineHQ repository are both keyed to the
+codename, so on a different release they will not resolve and most of the
+install will fail. Other desktops are not tested at all: the launcher makes
+specific use of `xfwm4`, and the on-screen exit bar is drawn over the XFCE
+panel.
 
 ## What it actually does
 

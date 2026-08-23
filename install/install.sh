@@ -54,7 +54,8 @@ CODENAME="${UBUNTU_CODENAME:-${VERSION_CODENAME:-}}"
 if [ -z "$CODENAME" ]; then
   warn "cannot tell which Ubuntu release this is; the PPAs may not resolve"
 elif [ "$CODENAME" != "noble" ]; then
-  warn "built and tested on noble (Mint 22 / Ubuntu 24.04); this is $CODENAME"
+  warn "this needs a noble base (Mint 22.x / Xubuntu 24.04); this is $CODENAME"
+  warn "the libretro PPA and WineHQ are keyed to the codename and will not resolve"
 else
   ok "package base is noble"
 fi
