@@ -55,6 +55,10 @@ optional extras.
 The clone can go anywhere and be called anything — every script works out
 where it lives. Your username does not matter either.
 
+To update later: `git pull` and run `install.sh` again. It is idempotent, and
+your games, saves and settings live outside the clone, so nothing of yours is
+touched. [INSTALL.md](INSTALL.md#updating) has the detail.
+
 For Windows and native PC games as well, use `install.sh --with-optional`:
 that adds Wine and builds JoyShockMapper (see *PC games* below).
 

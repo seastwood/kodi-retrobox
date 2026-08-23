@@ -96,6 +96,31 @@ which systems want which files, and that folder has a README too.
 If a game will not start, the launcher says so on the television and names the
 file it wanted. That message is the authority.
 
+## Updating
+
+    cd ~/retrobox
+    git pull
+    install/install.sh
+
+That is the whole update. `install.sh` is idempotent, so the second run only
+does what has changed: new packages, new cores, re-linking anything the update
+added, and re-applying the settings templates. Add `--with-optional` if you
+use the PC games support, so the Wine and JoyShockMapper half updates too.
+
+**Your games, saves and settings are not touched.** They live outside the
+clone — in `~/Games`, `~/.local/share/retroarch` and `~/.kodi` — and the
+repository holds only the definition. `local/` and `secrets/` are ignored by
+git, so a pull never overwrites what this machine captured.
+
+If `git pull` refuses because of local changes, you have edited something the
+repository tracks. `git status` will say what; `git stash` puts your edits
+aside, and `git checkout -- <file>` throws them away.
+
+**Quit Kodi before updating** if the update touches the skin — `kodi-setup.sh`
+edits the add-on database Kodi holds open and refuses while it is running.
+`install.sh` warns and carries on rather than failing, so you can quit Kodi
+and re-run it afterwards.
+
 ## Optional extras
 
 None of these are needed to play games.

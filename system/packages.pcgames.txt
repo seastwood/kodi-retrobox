@@ -23,3 +23,18 @@ libevdev-dev
 # JoyShockLibrary, which JoyShockMapper pulls in during its build, needs this
 # and says so only once cmake is already running.
 libhidapi-dev
+
+# 32-bit graphics libraries for Wine. install.sh adds the i386 architecture
+# just before this list, so these resolve.
+#
+# libegl1:i386 is not pulled in by wine-staging and is not optional in
+# practice: without it every 32-bit game logs
+#     err:wgl:egl_init Failed to load libEGL.so.1
+# and falls back, which worked but is one more thing wrong in a log you are
+# reading because something else broke.
+#
+# There is deliberately no OpenAL package here. Wine ships no builtin
+# openal32.dll at all, so a game that wants OpenAL has to provide the Windows
+# DLL itself -- usually in its own _Redist folder. A system libopenal would
+# not be reached.
+libegl1:i386
