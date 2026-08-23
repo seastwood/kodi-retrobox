@@ -55,7 +55,7 @@ optional extras.
 The clone can go anywhere and be called anything — every script works out
 where it lives. Your username does not matter either.
 
-To update later: `git pull` and run `install.sh` again. It is idempotent, and
+To update later: `install/update.sh`. It is idempotent, and
 your games, saves and settings live outside the clone, so nothing of yours is
 touched. [INSTALL.md](INSTALL.md#updating) has the detail.
 

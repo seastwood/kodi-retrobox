@@ -98,11 +98,10 @@ file it wanted. That message is the authority.
 
 ## Updating
 
-    cd ~/retrobox
-    git pull
-    install/install.sh
+    ~/retrobox/install/update.sh
 
-That is the whole update. `install.sh` is idempotent, so the second run only
+That is the whole update: it stashes anything uncommitted, pulls, and runs
+`install.sh` for you. `install.sh` is idempotent, so the second run only
 does what has changed: new packages, new cores, re-linking anything the update
 added, and re-applying the settings templates. Add `--with-optional` if you
 use the PC games support, so the Wine and JoyShockMapper half updates too.
@@ -112,9 +111,12 @@ clone — in `~/Games`, `~/.local/share/retroarch` and `~/.kodi` — and the
 repository holds only the definition. `local/` and `secrets/` are ignored by
 git, so a pull never overwrites what this machine captured.
 
-If `git pull` refuses because of local changes, you have edited something the
-repository tracks. `git status` will say what; `git stash` puts your edits
-aside, and `git checkout -- <file>` throws them away.
+**Why not plain `git pull`?** You can, and on a current install it works. But
+a machine installed before the code stopped baking in a home directory has
+`adopt.sh`'s rewrites sitting in every tracked file. Those are not your edits,
+yet git refuses to pull and blames you for them. `update.sh` stashes whatever
+is there first, so nothing is lost and nothing has to be untangled by hand; it
+prints the stash name, and `git stash list` and `git stash pop` do the rest.
 
 **Quit Kodi before updating** if the update touches the skin — `kodi-setup.sh`
 edits the add-on database Kodi holds open and refuses while it is running.
