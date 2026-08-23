@@ -40,6 +40,8 @@ can be built again on other hardware.
     secrets/     this machine's credentials (git ignores it)
 
 ## Installing
+First, install Linux Mint XFCE on a machine. 
+Then:
 
     sudo apt install -y git                   # a stock Mint 22 has no git
     git clone https://github.com/seastwood/kodi-retrobox ~/retrobox
