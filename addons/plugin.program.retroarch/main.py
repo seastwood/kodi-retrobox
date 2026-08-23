@@ -472,12 +472,34 @@ def reap():
         pass
 
 
-def pc_games():
+def game_installed(game):
+    """Whether a declared game is actually on this machine.
+
+    Wine games run through run-wine-game.sh, which always exists, so testing
+    exec[0] would call every one of them present. The working directory is the
+    honest test there, and exec[0] is the honest test for a native game -- so
+    check whichever of the two is declared.
+    """
+    cwd = game.get("cwd")
+    if cwd and not os.path.isdir(os.path.expanduser(cwd)):
+        return False
+    argv = game.get("exec") or []
+    if argv and not os.path.exists(os.path.expanduser(argv[0])):
+        return False
+    return bool(argv)
+
+
+def pc_games(all_declared=False):
+    """Declared games that are installed here. A declaration for a game you
+    have not copied over yet is hidden rather than shown as a tile that fails,
+    which is what lets the list be restored from a backup before the games
+    are."""
     try:
         with open(PCGAMES) as fh:
-            return json.load(fh).get("games", [])
+            games = json.load(fh).get("games", [])
     except (OSError, ValueError):
         return []
+    return games if all_declared else [g for g in games if game_installed(g)]
 
 
 def list_pc_games():
@@ -505,7 +527,7 @@ def list_pc_games():
 def launch_pc(game_id):
     for game in pc_games():
         if game.get("id") == game_id:
-            argv = game.get("exec") or []
+            argv = [os.path.expanduser(a) for a in (game.get("exec") or [])]
             if not argv or not os.path.exists(argv[0]):
                 xbmcgui.Dialog().notification("PC Game", "Executable not found",
                                               xbmcgui.NOTIFICATION_ERROR)
@@ -514,12 +536,13 @@ def launch_pc(game_id):
                        "--match", game.get("window") or game.get("name", game_id)]
             if game.get("stop_kodi"):
                 wrapped += ["--stop-kodi"]
+            wrapped += ["--id", game_id]
             if game.get("jsm"):
-                wrapped += ["--jsm", game["jsm"]]
+                wrapped += ["--jsm", os.path.expanduser(game["jsm"])]
             for key, value in sorted((game.get("env") or {}).items()):
                 wrapped += ["--env", "%s=%s" % (key, value)]
             if game.get("cwd"):
-                wrapped += ["--cwd", game["cwd"]]
+                wrapped += ["--cwd", os.path.expanduser(game["cwd"])]
             wrapped += ["--"] + argv
             if not os.path.exists(PC_LAUNCHER):
                 wrapped = argv          # fall back to a plain launch

@@ -100,6 +100,13 @@ else. Nothing there is scanned -- a PC game is whatever you say it is, declared
 in `~/.local/share/pcgames.json`, which documents its own fields. They appear
 in Kodi behind the PC GAMES entry.
 
+You rarely need to name a mapping: the game's id finds it (`bf2` →
+`games/bf2.txt`), and anything without one of its own still gets
+`_default.txt`, so every PC game is playable with a pad and has the on-screen
+reference. A game declared here but not yet copied over is hidden rather than
+shown as a tile that fails — so restore the list first, copy the games in
+after, and each appears as it arrives.
+
 Games with no controller support are still playable with one:
 **JoyShockMapper** maps a pad to keyboard and mouse, per game, loaded while the
 game runs and unloaded afterwards. It is built from source by

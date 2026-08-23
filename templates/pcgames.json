@@ -12,15 +12,23 @@
     "  window    substring of the game's window title, so the launcher can",
     "            find and focus it",
     "  stop_kodi true if the game will not share the screen with Kodi",
-    "  jsm       a JoyShockMapper config in ~/.config/JoyShockMapper/games/,",
-    "            loaded while the game runs and unloaded afterwards",
+    "  jsm       a JoyShockMapper config, loaded while the game runs and",
+    "            unloaded afterwards. Usually leave it out: the id names it,",
+    "            so id \"bf2\" finds games/bf2.txt on its own. A bare",
+    "            filename, a ~ path or a full path all work too, and a game",
+    "            with no mapping of its own still gets games/_default.txt,",
+    "            so every game is playable with a pad and has the HUD.",
     "  art       a poster image for the Kodi tile",
     "",
     "An example, commented out by being in this list rather than in \"games\":",
     "  {\"id\": \"quake3\", \"name\": \"Quake III Arena\",",
     "   \"exec\": [\"/home/you/Games/pc/quake3/quake3e.x64\"],",
     "   \"cwd\": \"/home/you/Games/pc/quake3\",",
-    "   \"window\": \"Quake\", \"jsm\": \"quake3.txt\", \"stop_kodi\": true}"
+    "   \"window\": \"Quake\", \"stop_kodi\": true}",
+    "",
+    "A game declared here but not copied onto this machine yet is hidden",
+    "rather than shown as a tile that fails, so the list can be restored from",
+    "a backup before the games are. Copy the game in and it appears."
   ],
   "games": []
 }

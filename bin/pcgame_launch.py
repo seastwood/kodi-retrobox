@@ -123,7 +123,32 @@ HUD_BIN = "/home/retro/.local/bin/jsm-hud"
 # mapping and the on-screen reference, not just the ones somebody has written a
 # config for: a new game is playable with a pad the moment it is added, and the
 # HUD is there to show what the buttons do and to change them.
+JSM_GAMES = "/home/retro/.config/JoyShockMapper/games"
 DEFAULT_JSM = "/home/retro/.config/JoyShockMapper/games/_default.txt"
+
+
+def resolve_jsm(name, game_id=None):
+    """Find a mapping for this game, trying hardest before giving up.
+
+    A config may be written as a full path, as a bare filename (which is
+    what templates/pcgames.json has always documented), or left out
+    entirely -- in which case the game id names it, so a game called bf2
+    finds games/bf2.txt with nothing declared at all. Failing everything,
+    the shared default still gives a pad and an on-screen reference.
+    """
+    tries = []
+    for candidate in (name, game_id):
+        if not candidate:
+            continue
+        tries.append(candidate)
+        if not candidate.endswith(".txt"):
+            tries.append(candidate + ".txt")
+    for t in tries:
+        t = os.path.expanduser(t)
+        path = t if os.path.isabs(t) else os.path.join(JSM_GAMES, t)
+        if os.path.exists(path):
+            return path
+    return DEFAULT_JSM if os.path.exists(DEFAULT_JSM) else None
 
 # JSM takes commands on stdin and reports on stdout. Both are made reachable
 # from outside this process so the HUD can drive JSM and watch what it loads:
@@ -442,6 +467,8 @@ def main():
                     help="stop Kodi for the duration of the game")
     ap.add_argument("--env", action="append", default=[], metavar="K=V",
                     help="extra environment for the game, repeatable")
+    ap.add_argument("--id", metavar="ID", default=None,
+                    help="the game's id, used to find its mapping by name")
     ap.add_argument("--jsm", metavar="CONFIG",
                     help="JoyShockMapper config to run alongside the game")
     ap.add_argument("cmd", nargs=argparse.REMAINDER)
@@ -496,9 +523,7 @@ def main():
     # still on screen for the games that do not set stop_kodi -- that receives
     # the synthesised mouse and keys, and a stray click on the PC GAMES list
     # silently launches another game.
-    config = args.jsm
-    if not config and os.path.exists(DEFAULT_JSM):
-        config = DEFAULT_JSM
+    config = resolve_jsm(args.jsm, args.id)
     jsm = start_jsm(config)
     hud = start_hud(config) if jsm else None
 

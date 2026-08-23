@@ -141,8 +141,14 @@ def build():
     # Native PC games are grouped behind one entry rather than listed individually.
     try:
         with open(PCGAMES) as fh:
+            # A Wine game's exec[0] is run-wine-game.sh, which is always
+            # there, so its working directory is what says whether the game
+            # itself is. Same rule as the add-on's game_installed().
             pcs = [g for g in json.load(fh).get("games", [])
-                   if (g.get("exec") or [""])[0] and os.path.exists(g["exec"][0])]
+                   if (g.get("exec") or [""])[0]
+                   and os.path.exists(os.path.expanduser(g["exec"][0]))
+                   and (not g.get("cwd")
+                        or os.path.isdir(os.path.expanduser(g["cwd"])))]
     except (OSError, ValueError):
         pcs = []
     if pcs:
