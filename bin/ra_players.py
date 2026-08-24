@@ -767,6 +767,28 @@ def _parse_profile(path):
     return out
 
 
+def autoconfig_dirs():
+    """Every directory a profile might be in, one level deep.
+
+    RetroArch files these by input driver -- `autoconfig/udev/Some Pad.cfg` --
+    so listing only `autoconfig` finds nothing a user ever installed. All 440
+    profiles on this machine live in the `udev` subdirectory, and none of them
+    were being read: the picker fell through to matching by vendor and product
+    id, where a stock profile that happens to share an Xbox 360's ids answered
+    for a completely different pad. `_parse_profile` already refuses anything
+    that is not a udev profile, so scanning the subdirectories is safe.
+    """
+    found = []
+    for base in AUTOCONFIG_DIRS:
+        found.append(base)
+        try:
+            found += [os.path.join(base, name) for name in sorted(os.listdir(base))
+                      if os.path.isdir(os.path.join(base, name))]
+        except OSError:
+            continue
+    return found
+
+
 def profile_index():
     """Every autoconfig profile, indexed by device name and by vendor/product.
 
@@ -777,7 +799,7 @@ def profile_index():
     if _PROFILES is not None:
         return _PROFILES
     by_name, by_id = {}, {}
-    for d in AUTOCONFIG_DIRS:
+    for d in autoconfig_dirs():
         try:
             files = sorted(os.listdir(d))
         except OSError:
@@ -877,6 +899,14 @@ def pad_controls(dev):
     for fallback_code, action in FALLBACK_BTN.items():
         if action in missing and fallback_code not in btn:
             btn[fallback_code] = action
+    # Confirm is chosen by what is printed on the button, and a Mega Drive pad
+    # prints A on the *west* one -- which is where fourth-player's on-screen
+    # controller puts it too. So an upper face button with nothing else to do
+    # becomes a second way to claim a slot. Nothing is taken away: back stays
+    # on the east button, and a pad whose profile already uses these keeps it.
+    for spare in (evdev.ecodes.BTN_X, evdev.ecodes.BTN_Y):
+        if spare in keys and spare not in btn:
+            btn[spare] = "confirm"
     return btn, labels
 
 

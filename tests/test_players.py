@@ -158,21 +158,35 @@ XPAD_KEYS = [0x130, 0x131, 0x133, 0x134, 0x136, 0x137,
 
 
 def acts(dev):
+    """action -> code, plus the labels.
+
+    Lossy on purpose for the single-valued actions. `confirm` is not one of
+    them any more -- spare upper face buttons are accepted as extra ways to
+    claim -- so ask `confirms()` which buttons do it rather than reading this.
+    """
     btn, labels = m.pad_controls(dev)
     return {a: c for c, a in btn.items()}, labels
+
+
+def confirms(dev):
+    """Every code that claims a slot on this pad."""
+    btn, _ = m.pad_controls(dev)
+    return {c for c, a in btn.items() if a == "confirm"}
 
 
 # A Switch pad prints A on the *right* face button and Xbox prints it on the
 # bottom one. Both must claim on the button the player can see marked A, or
 # the prompt is a lie -- this is the swap the profiles are here to fix.
 a, lab = acts(CapDev("Nintendo Switch Pro Controller", 0x57e, 0x2009, SWITCH_KEYS))
-check(a["confirm"] == e.BTN_EAST, "Switch claims on the right face button")
+check(e.BTN_EAST in confirms(CapDev("Nintendo Switch Pro Controller", 0x57e, 0x2009, SWITCH_KEYS)),
+      "Switch claims on the right face button")
 check(a["back"] == e.BTN_SOUTH, "Switch backs out on the bottom one")
 check(a["start"] == e.BTN_START and lab["start"] == "+", "Switch start is +, got %r" % lab["start"])
 check(lab["confirm"] == "A" and lab["back"] == "B", "and prints A / B")
 
 a, lab = acts(CapDev("Afterglow AX.1 Gamepad for Xbox 360", 3695, 1043, XPAD_KEYS))
-check(a["confirm"] == e.BTN_SOUTH, "an Xbox pad claims on the bottom face button")
+check(e.BTN_SOUTH in confirms(CapDev("Microsoft X-Box 360 pad", 0x45e, 0x28e, XPAD_KEYS)),
+      "an Xbox pad claims on the bottom face button")
 check(a["back"] == e.BTN_EAST, "and backs out on the right one")
 check(lab["confirm"] == "A" and lab["back"] == "B",
       "printing A / B as well, so one prompt suits both")
@@ -184,8 +198,51 @@ check(a["confirm"] == e.BTN_SOUTH and a["back"] == e.BTN_EAST,
 check(a["start"] == e.BTN_START, "including start")
 
 print("-- and Sunshine's virtual pad is found by its ids, not its name --")
-a, _ = acts(CapDev("Sunshine Nintendo (virtual) pad", 0x57e, 0x2009, SWITCH_KEYS))
-check(a["confirm"] == e.BTN_EAST, "the borrowed vendor/product ids identify it")
+sunshine = CapDev("Sunshine Nintendo (virtual) pad", 0x57e, 0x2009, SWITCH_KEYS)
+check(e.BTN_EAST in confirms(sunshine), "the borrowed vendor/product ids identify it")
+
+print("-- profiles are found where RetroArch actually files them --")
+import tempfile
+
+_real_dirs = m.AUTOCONFIG_DIRS
+_root = tempfile.mkdtemp()
+os.makedirs(os.path.join(_root, "udev"))
+# RetroArch files profiles under a directory named for the input driver, which
+# is where every one of the hundreds on a real machine lives. Listing only the
+# parent found none of them, and the picker then fell back to matching by
+# vendor and product -- where a stock profile sharing an Xbox 360's ids
+# answered for a completely different pad.
+with open(os.path.join(_root, "udev", "Made Up Pad.cfg"), "w") as fh:
+    fh.write('''input_driver = "udev"
+input_device = "Made Up Pad"
+input_b_btn = "0"
+input_a_btn = "1"
+input_a_btn_label = "B"
+input_start_btn = "7"
+''')
+try:
+    m.AUTOCONFIG_DIRS = (_root,)
+    m._PROFILES = None          # the index is built once and kept
+    found = m.find_profile(CapDev("Made Up Pad", 0x1234, 0x5678, XPAD_KEYS))
+    check(found is not None, "a profile in the udev subdirectory is found at all")
+    check(found and found.get("input_device") == "Made Up Pad",
+          "and it is the right one")
+    missing = m.find_profile(CapDev("Nobody Pad", 0x1234, 0x5678, XPAD_KEYS))
+    check(missing is None, "a name nothing matches still finds nothing")
+finally:
+    m.AUTOCONFIG_DIRS = _real_dirs
+    m._PROFILES = None
+
+print("-- a spare upper face button is a second way to claim --")
+xbox = CapDev("Microsoft X-Box 360 pad", 0x45e, 0x28e, XPAD_KEYS)
+xbox_confirms = confirms(xbox)
+check(e.BTN_SOUTH in xbox_confirms, "the button printed A still claims")
+check(e.BTN_X in xbox_confirms,
+      "and so does the west one, which is where a Mega Drive prints its A")
+xbox_btn, _ = m.pad_controls(xbox)
+check(xbox_btn[e.BTN_EAST] == "back",
+      "backing out is untouched -- the east button is not stolen")
+check(xbox_btn[e.BTN_START] == "start", "and neither is start")
 
 print("-- button numbers follow the device's own key list --")
 idx = m.udev_button_index(SWITCH_KEYS)
