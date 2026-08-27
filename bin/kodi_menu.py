@@ -183,6 +183,18 @@ def build():
                   SKINICON + "DefaultAddonPeripheral.png",
                   "OVER THE NETWORK"))
 
+    # Remote co-op (script.fourthplayer), beside the other ways a controller
+    # gets here. Only when it is actually installed: this menu is regenerated
+    # every time the games are synced, so an entry for a missing add-on would
+    # come back after every sync and do nothing when chosen.
+    if os.path.isdir(os.path.expanduser("~/.kodi/addons/script.fourthplayer")):
+        icon = os.path.join(ICON, "_multiplayer.png")
+        if not os.path.exists(icon):
+            icon = SKINICON + "DefaultAddonProgram.png"
+        out.append(sc("fourthplayer", "FOURTH PLAYER",
+                      "RunScript(script.fourthplayer)", icon,
+                      "PLAY WITH FRIENDS"))
+
     out.append(sc("retroarch", "RETROARCH",
                   "RunPlugin(plugin://plugin.program.retroarch/?open=1)",
                   SKINICON + "DefaultAddonGame.png"))
