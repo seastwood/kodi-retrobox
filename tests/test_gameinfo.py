@@ -31,7 +31,11 @@ sys.argv = ["plugin://x", "1", ""]
 # it. The README promises the clone can go anywhere and be called anything;
 # hard-coding one machine's name for it broke every one of these on a fresh
 # install, where it is called something else.
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# realpath, not abspath: install.sh runs these through
+# ~/.local/share/gametests, which is a symlink to this directory, and abspath
+# does not resolve symlinks -- so the repo appeared to be ~/.local/share and
+# nothing could be imported.
+REPO = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 loader = importlib.machinery.SourceFileLoader(
     "ra", os.path.join(REPO, "addons", "plugin.program.retroarch",
                        "main.py"))
