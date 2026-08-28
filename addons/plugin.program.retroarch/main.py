@@ -144,6 +144,123 @@ def players_label(users):
     return "1 PLAYER" if users == 1 else "%d PLAYERS" % users
 
 
+SAVES_DIR = os.path.expanduser("~/.config/retroarch/saves")
+STATES_DIR = os.path.expanduser("~/.config/retroarch/states")
+
+
+def _size(bytes_):
+    for unit in ("B", "kB", "MB", "GB"):
+        if bytes_ < 1024 or unit == "GB":
+            return "%.0f %s" % (bytes_, unit) if unit == "B" else "%.1f %s" % (bytes_, unit)
+        bytes_ /= 1024.0
+
+
+def _when(path):
+    import time
+    return time.strftime("%d %b %Y, %H:%M", time.localtime(os.path.getmtime(path)))
+
+
+def _beside(root, stem, suffix):
+    """A save or state file, wherever RetroArch's sorting settings put it.
+
+    Globbed rather than worked out: whether these are filed under the core's
+    name, under the content directory, or in neither, is three settings in
+    retroarch.cfg that can change without this being told.
+    """
+    for pattern in (os.path.join(root, "*", stem + suffix),
+                    os.path.join(root, stem + suffix),
+                    os.path.join(root, "*", "*", stem + suffix)):
+        found = sorted(glob.glob(pattern))
+        if found:
+            return found[0]
+    return None
+
+
+def game_info(system, entry):
+    """Everything known about one game, for the info panel."""
+    label = entry.get("label", "")
+    path = entry.get("path", "")
+    stem = os.path.splitext(os.path.basename(path))[0]
+    core = entry.get("core_path", "")
+    counts = player_counts()
+    users = counts.get(system, {}).get(label)
+    try:
+        manual = json.load(open(PLAYERS_MANUAL)).get(system, {})
+    except (OSError, ValueError):
+        manual = {}
+
+    lines = [label, ""]
+
+    lines.append("SYSTEM")
+    lines.append("  %s" % short_name(system))
+    if short_name(system) != system:
+        lines.append("  (%s)" % system)
+    if users:
+        lines.append("  %s%s" % (players_label(users),
+                                 "  - set by hand" if label in manual else ""))
+    else:
+        lines.append("  player count not known")
+    lines.append("")
+
+    lines.append("FILE")
+    lines.append("  %s" % path)
+    if os.path.exists(path):
+        lines.append("  %s, last changed %s" % (_size(os.path.getsize(path)),
+                                                _when(path)))
+    else:
+        lines.append("  MISSING - the file is not there any more")
+    crc = (entry.get("crc32") or "").split("|")[0]
+    if crc and crc != "00000000":
+        lines.append("  CRC %s" % crc)
+    else:
+        lines.append("  no CRC: this one was found on disk, not in the database")
+    lines.append("")
+
+    lines.append("EMULATOR")
+    lines.append("  %s" % (entry.get("core_name") or os.path.basename(core)))
+    lines.append("  %s%s" % (os.path.basename(core),
+                             "" if os.path.exists(core) else "  - NOT INSTALLED"))
+    shader = SHADERS.get(system, CRT)
+    lines.append("  filter: %s" % (os.path.basename(shader) if shader else "none"))
+    wanted = REQUIRED_BIOS.get(system)
+    if wanted:
+        have = [b for b in wanted if os.path.exists(os.path.join(SYSTEM_DIR, b))]
+        lines.append("  BIOS: %s" % (", ".join(have) if have
+                                     else "MISSING (needs one of %s)" % ", ".join(wanted)))
+    lines.append("")
+
+    lines.append("SAVED GAMES")
+    state = _beside(STATES_DIR, stem, ".state.auto")
+    if state:
+        lines.append("  Resumes from %s" % _when(state))
+        lines.append("  Use 'Start fresh' in this menu to begin at the title screen")
+        lines.append("  %s" % state)
+    else:
+        lines.append("  No save state, so this starts at the title screen")
+    srm = _beside(SAVES_DIR, stem, ".srm")
+    if srm:
+        lines.append("  In-game save: %s, %s" % (_size(os.path.getsize(srm)),
+                                                 _when(srm)))
+        lines.append("  %s" % srm)
+    else:
+        lines.append("  No in-game save file yet")
+    lines.append("")
+
+    lines.append("  Favourite: %s" % ("yes" if is_favourite(system, label) else "no"))
+    return "\n".join(lines)
+
+
+def show_info(system, label):
+    for name, data in playlists():
+        if name != system:
+            continue
+        for entry in data.get("items", []):
+            if entry.get("label") == label:
+                xbmcgui.Dialog().textviewer(short_name(system), game_info(system, entry))
+                return
+    xbmcgui.Dialog().ok("File info", "That game is no longer in the list.")
+
+
 def game_item(system, entry, users, second_line):
     """One game row, built the same way wherever it is listed."""
     label = entry.get("label", "")
@@ -165,6 +282,8 @@ def game_item(system, entry, users, second_line):
          "RunPlugin(%s)" % url(fav="1", system=system, label=label)),
         ("Set player count",
          "RunPlugin(%s)" % url(setplayers="1", system=system, label=label)),
+        ("File info",
+         "RunPlugin(%s)" % url(info="1", system=system, label=label)),
     ]
     # Picking a game normally resumes it exactly where it was left, which is
     # the right default and not always what is wanted. This starts it at its
@@ -1208,6 +1327,8 @@ def main():
         launch(args.get("core", ""), args.get("rom", ""),
                args.get("system", ""), args.get("maxplayers", ""),
                fresh=bool(args.get("fresh")))
+    elif args.get("info"):
+        show_info(args.get("system", ""), args.get("label", ""))
     elif args.get("setplayers"):
         set_players(args.get("system", ""), args.get("label", ""))
     elif args.get("multiplayer"):
