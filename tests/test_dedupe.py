@@ -13,8 +13,13 @@ import os
 import sys
 import tempfile
 
+# The repository this test lives in, rather than a path with a clone name in
+# it. The README promises the clone can go anywhere and be called anything;
+# hard-coding one machine's name for it broke every one of these on a fresh
+# install, where it is called something else.
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 loader = importlib.machinery.SourceFileLoader(
-    "sg", os.path.expanduser("~/retro-console/bin/sync_games.py"))
+    "sg", os.path.join(REPO, "bin", "sync_games.py"))
 sg = importlib.util.module_from_spec(
     importlib.util.spec_from_loader("sg", loader))
 loader.exec_module(sg)

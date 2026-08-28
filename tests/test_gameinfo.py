@@ -27,9 +27,14 @@ sys.modules["xbmcgui"].Dialog = lambda: types.SimpleNamespace(
     ok=lambda *a: None, textviewer=lambda *a, **k: None)
 sys.argv = ["plugin://x", "1", ""]
 
+# The repository this test lives in, rather than a path with a clone name in
+# it. The README promises the clone can go anywhere and be called anything;
+# hard-coding one machine's name for it broke every one of these on a fresh
+# install, where it is called something else.
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 loader = importlib.machinery.SourceFileLoader(
-    "ra", os.path.expanduser(
-        "~/retro-console/addons/plugin.program.retroarch/main.py"))
+    "ra", os.path.join(REPO, "addons", "plugin.program.retroarch",
+                       "main.py"))
 ra = importlib.util.module_from_spec(
     importlib.util.spec_from_loader("ra", loader))
 loader.exec_module(ra)

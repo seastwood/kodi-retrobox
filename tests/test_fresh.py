@@ -13,8 +13,13 @@ import os
 import sys
 
 sys.argv = ["x"]
+# The repository this test lives in, rather than a path with a clone name in
+# it. The README promises the clone can go anywhere and be called anything;
+# hard-coding one machine's name for it broke every one of these on a fresh
+# install, where it is called something else.
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 loader = importlib.machinery.SourceFileLoader(
-    "rp", os.path.expanduser("~/retro-console/bin/ra_players.py"))
+    "rp", os.path.join(REPO, "bin", "ra_players.py"))
 rp = importlib.util.module_from_spec(
     importlib.util.spec_from_loader("rp", loader))
 loader.exec_module(rp)
