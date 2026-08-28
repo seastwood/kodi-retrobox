@@ -201,6 +201,28 @@ print("-- and Sunshine's virtual pad is found by its ids, not its name --")
 sunshine = CapDev("Sunshine Nintendo (virtual) pad", 0x57e, 0x2009, SWITCH_KEYS)
 check(e.BTN_EAST in confirms(sunshine), "the borrowed vendor/product ids identify it")
 
+print("-- an id several profiles claim is decided by the name --")
+# 1118:654 is a Microsoft Xbox 360 pad, and it is what every third-party and
+# virtual pad pretends to be: three profiles in the packaged set claim it. When
+# whichever the directory listing ended on won, a real Xbox pad on a fresh
+# install got a handheld's profile, with confirm on the north face button.
+xbox_prof = {"input_driver": "udev", "input_device": "Microsoft X-Box 360 pad",
+             "input_b_btn": "0", "input_a_btn": "1"}
+handheld = {"input_driver": "udev", "input_device": "Handheld Controller",
+            "input_b_btn": "3", "input_a_btn": "2"}
+series = {"input_driver": "udev", "input_device": "Microsoft X-Box Series X|S pad BT",
+          "input_b_btn": "0", "input_a_btn": "1"}
+check(m.best_by_ids([handheld, series], "Microsoft X-Box 360 pad") is series,
+      "an Xbox pad takes the Xbox profile, not the handheld one")
+check(m.best_by_ids([handheld], "Microsoft X-Box 360 pad") is handheld,
+      "one candidate is still used: an id that only one profile claims is a fact")
+check(m.best_by_ids([handheld, series], "Some Unrelated Thing") is None,
+      "and a name with nothing in common falls back rather than guessing")
+check(m.best_by_ids([xbox_prof, series], "Sunshine X-Box One (virtual) pad") is not None,
+      "Sunshine's invented name still finds its borrowed profile")
+check(m.name_words("Microsoft X-Box 360 pad") == {"microsoft", "xbox", "360", "pad"},
+      "X-Box and Xbox are the same word: %s" % m.name_words("Microsoft X-Box 360 pad"))
+
 print("-- profiles are found where RetroArch actually files them --")
 import tempfile
 

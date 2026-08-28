@@ -821,15 +821,54 @@ def profile_index():
             except (KeyError, ValueError):
                 continue
             if ids != (0, 0):
-                by_id.setdefault(ids, prof)
+                by_id.setdefault(ids, []).append(prof)
     _PROFILES = (by_name, by_id)
     return _PROFILES
+
+
+def name_words(text):
+    """A pad's name as comparable words. X-Box, XBox and Xbox are one word."""
+    text = (text or "").lower().replace("-", "")
+    cleaned = "".join(c if c.isalnum() else " " for c in text)
+    return {w for w in cleaned.split() if len(w) > 1}
+
+
+def best_by_ids(candidates, name):
+    """Which of the profiles claiming one id belongs to this pad.
+
+    An id identifies far less than it looks like it does: 1118:654, a Microsoft
+    Xbox 360 pad, is claimed by three profiles in the packaged set alone,
+    because it is what every third-party pad and every virtual pad pretends to
+    be. Keeping whichever the directory listing ended on resolved a real Xbox
+    pad to a handheld's profile on a fresh install -- confirm on the north face
+    button, back on the west one, both printed wrong in the prompt, and no
+    error anywhere to say so.
+
+    So the names break the tie. Nothing in common with any of them means the id
+    has told us nothing, and the built-in defaults are a better answer than a
+    profile picked by directory order.
+    """
+    if len(candidates) == 1:
+        return candidates[0]
+    wanted = name_words(name)
+    scored = []
+    for prof in candidates:
+        words = set()
+        for key, value in prof.items():
+            if key.startswith("input_device"):
+                words |= name_words(value)
+        scored.append((len(wanted & words), prof))
+    best = max(scored, key=lambda pair: pair[0])
+    return best[1] if best[0] else None
 
 
 def find_profile(dev):
     """This pad's profile: by name the way RetroArch matches it, then by
     vendor/product ids -- Sunshine's virtual pad invents a name of its own but
-    carries the ids of the controller it stands in for."""
+    carries the ids of the controller it stands in for.
+
+    Only ids that exactly one profile claims are trusted; see profile_index.
+    """
     by_name, by_id = profile_index()
     prof = by_name.get(getattr(dev, "name", "").lower())
     if prof is not None:
@@ -837,7 +876,10 @@ def find_profile(dev):
     info = getattr(dev, "info", None)
     if info is None:
         return None
-    return by_id.get((info.vendor, info.product))
+    candidates = by_id.get((info.vendor, info.product))
+    if not candidates:
+        return None
+    return best_by_ids(candidates, getattr(dev, "name", ""))
 
 
 def pad_controls(dev):
