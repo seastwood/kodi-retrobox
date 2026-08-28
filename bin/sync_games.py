@@ -628,6 +628,80 @@ def drop_entries(paths):
     return dropped
 
 
+def dedupe_entries():
+    """One game, one entry, when the same ROM is on disk in two places.
+
+    A .sfc filed under nes/ is still a SNES game: the database scan identifies
+    it by content, so the misfiled copy and the correctly filed one both land
+    in the SNES playlist. Two entries, same label, same CRC, different paths --
+    and both of them work, so nothing ever complains and the game simply
+    appears twice on the television.
+
+    The copy under the folder the rest of that playlist lives in is the one
+    kept. The other is dropped from the playlist and named in the log, along
+    with where it is: the file is still on disk, and whether a stray ROM in the
+    wrong folder should be deleted is not this script's call.
+    """
+    dropped = []
+    for pl in sorted(glob.glob(os.path.join(PLDIR, "*.lpl"))):
+        system = os.path.basename(pl)[:-4]
+        try:
+            data = json.load(open(pl))
+        except (OSError, ValueError):
+            continue
+        items = data.get("items", [])
+
+        def folder_of(item):
+            path = item.get("path", "")
+            if path.startswith(ROMS + os.sep):
+                return path[len(ROMS) + 1:].split(os.sep)[0]
+            return None
+
+        # The folder most of this playlist lives in, rather than the first one
+        # seen: with a duplicate in the list, the first is a coin toss.
+        counts = {}
+        for item in items:
+            folder = folder_of(item)
+            if folder:
+                counts[folder] = counts.get(folder, 0) + 1
+        home = max(counts, key=counts.get) if counts else None
+
+        def identity(item):
+            # A real CRC means the same ROM wherever it sits. The placeholder
+            # is what this script writes for anything the database could not
+            # identify, and says nothing, so fall back to the label.
+            crc = (item.get("crc32") or "").split("|")[0]
+            if crc and crc != "00000000":
+                return ("crc", crc)
+            return ("label", (item.get("label") or "").lower())
+
+        groups = {}
+        for item in items:
+            groups.setdefault(identity(item), []).append(item)
+
+        keep, lose = [], []
+        for item in items:
+            group = groups[identity(item)]
+            if len(group) == 1:
+                keep.append(item)
+                continue
+            # Prefer the copy where the rest of the system lives; failing that
+            # the first by path, so the choice is the same on every run.
+            best = min(group, key=lambda i: (folder_of(i) != home,
+                                             i.get("path", "")))
+            (keep if item is best else lose).append(item)
+
+        if not lose:
+            continue
+        for item in lose:
+            log("  duplicate: %s / %s -- also on disk at %s"
+                % (system, item.get("label"), item.get("path")))
+        data["items"] = keep
+        json.dump(data, open(pl, "w"), indent=2)
+        dropped.append("%s -%d" % (system, len(lose)))
+    return dropped
+
+
 def prune_missing():
     """Drop entries whose ROM is no longer on disk.
 
@@ -873,6 +947,9 @@ def main():
     gone = prune_missing()
     if gone:
         log("removed, no longer on disk: %s" % ", ".join(gone))
+    twice = dedupe_entries()
+    if twice:
+        log("same game listed twice: %s" % ", ".join(twice))
     changed = assign_cores()
     if changed:
         log("cores assigned: %s" % ", ".join(changed))

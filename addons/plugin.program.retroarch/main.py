@@ -160,12 +160,23 @@ def game_item(system, entry, users, second_line):
     item.setArt(art_for(system, label))
     item.setProperty("IsPlayable", "false")
     starred = is_favourite(system, label)
-    item.addContextMenuItems([
+    menu = [
         ("Remove from favourites" if starred else "Add to favourites",
          "RunPlugin(%s)" % url(fav="1", system=system, label=label)),
         ("Set player count",
          "RunPlugin(%s)" % url(setplayers="1", system=system, label=label)),
-    ])
+    ]
+    # Picking a game normally resumes it exactly where it was left, which is
+    # the right default and not always what is wanted. This starts it at its
+    # own title screen instead, and leaves the state that was there alone --
+    # in-game saving is a different mechanism and still works.
+    if entry.get("core_path") and entry.get("path"):
+        menu.insert(0, (
+            "Start fresh (ignore save state)",
+            "RunPlugin(%s)" % url(play="1", fresh="1", system=system,
+                                  maxplayers=str(users or ""),
+                                  core=entry["core_path"], rom=entry["path"])))
+    item.addContextMenuItems(menu)
     return item
 
 
@@ -342,7 +353,7 @@ def preflight(core, rom, system):
     return None
 
 
-def launch(core, rom, system="", players=""):
+def launch(core, rom, system="", players="", fresh=False):
     problem = preflight(core, rom, system)
     if problem:
         xbmc.log("plugin.program.retroarch: refusing to launch: %s" % problem,
@@ -368,6 +379,8 @@ def launch(core, rom, system="", players=""):
     except OSError:
         pass                              # remembering is a nicety, not the job                              # remembering is a nicety, not the job
     argv = [PICKER]
+    if fresh:
+        argv += ["--fresh"]
     # A one-player game with one controller has nothing to ask, and the picker
     # sizes its board to the game rather than always offering four.
     if players.isdigit():
@@ -375,7 +388,8 @@ def launch(core, rom, system="", players=""):
     shader = SHADERS.get(system, CRT)
     if not shader or os.path.exists(shader):
         argv += ["--shader", shader or "none"]
-    run(argv + ["-f", "-L", core, rom], os.path.basename(rom))
+    run(argv + ["-f", "-L", core, rom],
+        os.path.basename(rom) + (" - from the start" if fresh else ""))
 
 
 def list_stored(path, heading, empty):
@@ -1192,7 +1206,8 @@ def main():
         resume()
     elif args.get("play"):
         launch(args.get("core", ""), args.get("rom", ""),
-               args.get("system", ""), args.get("maxplayers", ""))
+               args.get("system", ""), args.get("maxplayers", ""),
+               fresh=bool(args.get("fresh")))
     elif args.get("setplayers"):
         set_players(args.get("system", ""), args.get("label", ""))
     elif args.get("multiplayer"):

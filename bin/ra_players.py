@@ -1035,7 +1035,29 @@ def draw(screen, fonts, pads, message, slots):
     pygame.display.flip()
 
 
-def write_override(pads, slots):
+# Starting a game the way the cartridge did: from its own title screen.
+#
+# Both of these are normally on, so a game picked from the menu resumes exactly
+# where it was last left. That is the right default and it is not always what
+# is wanted -- and auto-save matters as much as auto-load here, because a fresh
+# run that saved on exit would write over the state being preserved.
+#
+# In-game saving is untouched. Battery saves and memory cards are a different
+# mechanism from save states, so a game started this way still saves the way it
+# always did.
+FRESH_LINES = ('savestate_auto_load = "false"\n'
+               'savestate_auto_save = "false"\n')
+
+
+def fresh_override():
+    """A config that only turns the automatic save state off."""
+    fd, path = tempfile.mkstemp(prefix="ra_fresh_", suffix=".cfg")
+    with os.fdopen(fd, "w") as fh:
+        fh.write(FRESH_LINES)
+    return path
+
+
+def write_override(pads, slots, fresh=False):
     """Write a RetroArch config fragment binding claimed devices to ports."""
     claimed = [p for p in pads if p.slot is not None]
     kbd_slot = next((p.slot for p in claimed if p.kind == "kbd"), None)
@@ -1078,6 +1100,10 @@ def write_override(pads, slots):
                     fh.write('input_player%d_%s = "%s"\n'
                              % (s + 1, name,
                                 binds[name] if s == kbd_slot else "nul"))
+        if fresh:
+            # Last, so it beats anything above it, though nothing above it
+            # touches save states today.
+            fh.write(FRESH_LINES)
     return path
 
 
@@ -1117,19 +1143,27 @@ def main():
     # --max-players is ours, not RetroArch's, so it never reaches the emulator.
     cap = None
     shader = None
-    while len(args) >= 2 and args[0] in ("--max-players", "--shader"):
-        if args[0] == "--max-players":
-            try:
-                cap = max(1, int(args[1]))
-            except ValueError:
-                cap = None
-        else:
-            # "none" is a real answer, and a different one from saying nothing.
-            shader = "" if args[1] == "none" else args[1]
-        args = args[2:]
+    fresh = False
+    while args:
+        if args[0] == "--fresh":
+            fresh = True
+            args = args[1:]
+            continue
+        if len(args) >= 2 and args[0] in ("--max-players", "--shader"):
+            if args[0] == "--max-players":
+                try:
+                    cap = max(1, int(args[1]))
+                except ValueError:
+                    cap = None
+            else:
+                # "none" is a real answer, and different from saying nothing.
+                shader = "" if args[1] == "none" else args[1]
+            args = args[2:]
+            continue
+        break
     if not args:
-        print("usage: ra_players.py [--max-players N] <retroarch args...>",
-              file=sys.stderr)
+        print("usage: ra_players.py [--max-players N] [--shader S] [--fresh] "
+              "<retroarch args...>", file=sys.stderr)
         return 2
 
     guard_config()
@@ -1140,7 +1174,8 @@ def main():
     if not needs_picker(len(joypads), cap):
         for _kind, _index, _path, dev in pads_raw:
             dev.close()
-        return run_retroarch(args, shader=shader)
+        return run_retroarch(args, fresh_override() if fresh else None,
+                             shader=shader)
 
     slots = player_slots(pads_raw, cap)
     pads = [Pad(index, path, dev, kind, cursor=i % slots)
@@ -1216,7 +1251,7 @@ def main():
         draw(screen, fonts, pads, msg, slots)
         clock.tick(60)
 
-    override = write_override(pads, slots) if launch else None
+    override = write_override(pads, slots, fresh) if launch else None
     for p in pads:
         p.close()
     pygame.quit()
