@@ -1223,7 +1223,6 @@ def draw_ask(screen, fonts, ask, lab):
         "LEFT / RIGHT TO CHOOSE     %s TO CONFIRM" % lab["confirm"], True, CYAN)
     screen.blit(hint, (x + (box_w - hint.get_width()) // 2,
                        y + int(box_h * 0.87)))
-    pygame.display.flip()
 
 
 # Leaving the tester must not depend on the mapping, because the mapping is
@@ -1517,7 +1516,6 @@ def draw(screen, fonts, pads, message, slots, playing=None):
 
     foot = fonts["small"].render(message, True, MAGENTA)
     screen.blit(foot, ((w - foot.get_width()) // 2, int(h * 0.88)))
-    pygame.display.flip()
 
 
 # Starting a game the way the cartridge did: from its own title screen.
@@ -1806,6 +1804,7 @@ def main():
         draw(screen, fonts, pads, msg, slots, playing)
         if ask is not None:
             draw_ask(screen, fonts, ask, lab)
+        pygame.display.flip()
         clock.tick(60)
 
     override = write_override(pads, slots, fresh) if launch else None
