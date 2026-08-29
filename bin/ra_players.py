@@ -1219,7 +1219,11 @@ def draw_ask(screen, fonts, ask, lab):
     pygame.display.flip()
 
 
-TEST_HOLD_SECONDS = 1.2
+# Leaving the tester must not depend on the mapping, because the mapping is
+# the thing being tested. Holding *any* button works however wrong it is --
+# and a hold is not something anybody does by accident while pressing buttons
+# to see what they are called.
+TEST_HOLD_SECONDS = 2.0
 
 
 def test_inputs(screen, fonts, clock, pads, lab):
@@ -1234,7 +1238,7 @@ def test_inputs(screen, fonts, clock, pads, lab):
     So this says it out loud. Press anything and it names it, per pad, in that
     pad's own colour. Nothing here changes anything; it is a mirror.
     """
-    holding = {}
+    holding = {}                  # (device, button) -> when it went down
     left = False
     while not left:
         for ev in pygame.event.get():
@@ -1259,10 +1263,9 @@ def test_inputs(screen, fonts, clock, pads, lab):
                     if event.value == 1:
                         q.seen = True
                         q.last_press = (name, act, event.code)
-                        if act == "back":
-                            holding[q.path] = now
-                    elif event.value == 0 and act == "back":
-                        holding.pop(q.path, None)
+                        holding[(q.path, event.code)] = now
+                    elif event.value == 0:
+                        holding.pop((q.path, event.code), None)
                 elif event.type == evdev.ecodes.EV_ABS:
                     way = axis_direction(q, event)
                     if way:
@@ -1325,8 +1328,7 @@ def draw_test(screen, fonts, pads, lab, held):
         % (lab["confirm"], lab["back"], lab["start"]), True, DIM)
     screen.blit(key, ((w - key.get_width()) // 2, int(h * 0.8)))
 
-    foot = fonts["small"].render(
-        "HOLD %s TO GO BACK" % lab["back"], True, MAGENTA)
+    foot = fonts["small"].render("HOLD ANY BUTTON TO GO BACK", True, MAGENTA)
     screen.blit(foot, ((w - foot.get_width()) // 2, int(h * 0.88)))
     if held > 0:
         bw = int(w * 0.3)
