@@ -13,6 +13,7 @@ in the same order yields the indices to write into
 input_playerN_joypad_index.
 """
 
+import glob
 import socket
 import json
 import os
@@ -1255,7 +1256,62 @@ def draw_test(screen, fonts, pads, lab, held):
     pygame.display.flip()
 
 
-def draw(screen, fonts, pads, message, slots):
+PLAYLIST_DIR = os.path.expanduser("~/.local/share/retroarch/plists")
+
+# The long names RetroArch files systems under, said the way the television
+# says them. Repeated from kodi_menu.py rather than imported: this screen has
+# to come up even if the menu generator is not installed.
+SHORT_SYSTEMS = {
+    "Nintendo - Super Nintendo Entertainment System": "SUPER NINTENDO",
+    "Nintendo - Nintendo Entertainment System": "NES",
+    "Sega - Mega-CD - Sega CD": "SEGA CD",
+    "Sega - Mega Drive - Genesis": "GENESIS",
+}
+
+
+def short_system(name):
+    if name in SHORT_SYSTEMS:
+        return SHORT_SYSTEMS[name]
+    for prefix in ("Nintendo - ", "Sega - ", "Sony - ", "Atari - ",
+                   "Microsoft - ", "NEC - ", "SNK - "):
+        if name.startswith(prefix):
+            return name[len(prefix):].upper()
+    return name.upper()
+
+
+def now_playing(args):
+    """(game, system) for the top of the picker, or ("", "").
+
+    Read from the playlists rather than from the filename, so the picker names
+    the game the same way the menu did a moment ago -- a ROM called
+    "Super Godzilla (USA).sfc" is filed with a label and a system, and showing
+    the path would be showing the machine's version of the answer. The filename
+    is the fallback, because a game can be launched that no playlist knows
+    about at all.
+    """
+    rom = args[-1] if args else ""
+    if not rom or rom.startswith("-"):
+        return "", ""
+    label = os.path.splitext(os.path.basename(rom))[0]
+    system = ""
+    try:
+        for path in sorted(glob.glob(os.path.join(PLAYLIST_DIR, "*.lpl"))):
+            try:
+                with open(path) as fh:
+                    data = json.load(fh)
+            except (OSError, ValueError):
+                continue
+            for item in data.get("items", []):
+                if item.get("path") == rom:
+                    label = item.get("label") or label
+                    system = os.path.basename(path)[:-len(".lpl")]
+                    return label, short_system(system)
+    except OSError:
+        pass
+    return label, ""
+
+
+def draw(screen, fonts, pads, message, slots, playing=None):
     w, h = screen.get_size()
     screen.fill(BG)
     for i in range(0, h, 4):
@@ -1263,6 +1319,16 @@ def draw(screen, fonts, pads, message, slots):
 
     title = fonts["big"].render("SELECT YOUR PLAYER", True, YELLOW)
     screen.blit(title, ((w - title.get_width()) // 2, int(h * 0.07)))
+
+    # What is about to start. Worth saying: by the time this screen is up the
+    # menu is gone, and a guest who asked for a game from their phone has never
+    # seen the menu at all.
+    if playing and playing[0]:
+        game = fonts["small"].render(playing[0][:52], True, WHITE)
+        screen.blit(game, ((w - game.get_width()) // 2, int(h * 0.165)))
+        if playing[1]:
+            sysname = fonts["tiny"].render(playing[1], True, CYAN)
+            screen.blit(sysname, ((w - sysname.get_width()) // 2, int(h * 0.215)))
 
     # Four across stays one row; eight wraps to two rather than shrinking
     # into a strip nobody can read from a sofa.
@@ -1496,6 +1562,7 @@ def main():
     launch = False
     cancelled = False
     ask = None                      # a yes/no question waiting on an answer
+    playing = now_playing(args)
     rescan_tick = 0
     note = ""
     note_ticks = 0
@@ -1602,7 +1669,7 @@ def main():
             # here -- without it the only way out is a keyboard's ESC.
             msg = "%s = CLAIM   %s = BACK   %s = TEST BUTTONS" % (
                 claim_btn, back_btn, test_btn)
-        draw(screen, fonts, pads, msg, slots)
+        draw(screen, fonts, pads, msg, slots, playing)
         if ask is not None:
             draw_ask(screen, fonts, ask, lab)
         clock.tick(60)
