@@ -52,6 +52,8 @@ HOLDBAR = os.path.expanduser("~/.local/bin/ra_holdbar.py")
 HOLD_SECONDS = 2.0               # what RetroArch itself waits for
 HOLD_GRACE = 0.45                # Start is an ordinary in-game button: draw
                                  # nothing until the hold is clearly deliberate
+HOLD_RESCAN_SECONDS = 3.0        # how often to look for a pad that turned up
+                                 # after the game started -- see watch_hold_to_exit
 RA_CFG = os.path.expanduser("~/.config/retroarch/retroarch.cfg")
 PIXEL_FONT = os.path.expanduser("~/.local/share/fonts/PressStart2P.ttf")
 
@@ -422,6 +424,45 @@ def send_quit():
         return False
 
 
+def hold_pads(existing):
+    """The pads worth watching for the hold-to-exit, and whether any left.
+
+    Rescanned rather than listed once. A controller that arrives after the game
+    started is the ordinary case, not an edge one: Sunshine creates its virtual
+    pad when a Moonlight client connects, so somebody joining a game already in
+    progress had no way to hold Start and close it -- the one thing they need
+    before anything else. Enumerating once meant their pad was never read.
+
+    Handles already being read are kept rather than reopened, because reopening
+    one loses whatever it had buffered.
+    """
+    held = {dev.path: (dev, starts) for dev, starts in existing}
+    keep, seen = [], set()
+    for kind, _index, path, dev in input_devices():
+        seen.add(path)
+        if path in held:
+            dev.close()                   # keep the handle already in use
+            keep.append(held[path])
+            continue
+        starts = set()
+        if kind == "pad":
+            btn, _labels = pad_controls(dev)
+            starts = {code for code, action in btn.items() if action == "start"}
+        if starts:
+            keep.append((dev, starts))
+        else:
+            dev.close()
+    gone = False
+    for path, entry in held.items():
+        if path not in seen:
+            gone = True
+            try:
+                entry[0].close()
+            except OSError:
+                pass
+    return keep, gone
+
+
 def watch_hold_to_exit(stop, bar=None):
     """Narrate the hold-to-exit while a game is running.
 
@@ -430,25 +471,25 @@ def watch_hold_to_exit(stop, bar=None):
     uses, because on a PowerA Switch pad Start is BTN_TR2 and the code called
     BTN_START is something else entirely.
     """
-    pads = []
-    for kind, _index, _path, dev in input_devices():
-        starts = set()
-        if kind == "pad":
-            btn, _labels = pad_controls(dev)
-            starts = {code for code, action in btn.items() if action == "start"}
-        if starts:
-            pads.append((dev, starts))
-        else:
-            dev.close()
-    if not pads:
-        return
+    pads, _ = hold_pads([])
     if bar is None:
         bar = HoldBar()
     held_since = None
     showing = False
     quit_sent = False
+    next_scan = time.time() + HOLD_RESCAN_SECONDS
     try:
         while not stop.is_set():
+            if time.time() >= next_scan:
+                next_scan = time.time() + HOLD_RESCAN_SECONDS
+                pads, gone = hold_pads(pads)
+                if gone and held_since is not None:
+                    # The pad being held may be the one that left, and its
+                    # release will never arrive.
+                    if showing:
+                        bar.hide()
+                        showing = False
+                    held_since, quit_sent = None, False
             for dev, starts in pads:
                 try:
                     event = dev.read_one()
