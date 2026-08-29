@@ -1089,26 +1089,54 @@ def axis_direction(p, event):
 
 
 def answer_event(p, event, ask):
-    """One pad's reply to a yes/no question. "yes", "no", or nothing.
+    """One pad's reply. "yes", "no", or nothing -- and moves the highlight.
 
     Only the pad that raised the question may answer it. Anyone being able to
     would make the question worse than useless: the whole reason it is asked is
-    that somebody may be about to start a game the others are not in.
+    that somebody may be about to act for the others.
+
+    An answer is *chosen* and then confirmed, rather than one button meaning
+    yes and another no. Which face button is "A" is not something this screen
+    can know for certain -- a guest's pad arrives through the browser's
+    standard mapping, and Xbox and Nintendo layouts print A on different
+    buttons -- so a pad whose letters are the other way round would otherwise
+    answer the opposite of what its owner meant, every time, with no warning.
+    Highlighting NO to begin with means the worst a reversed pad can do is
+    dismiss the question.
     """
     if p.path != ask["by"]:
         return None
-    if event.type != evdev.ecodes.EV_KEY or event.value != 1:
-        return None
     if p.kind == "kbd":
+        if event.type != evdev.ecodes.EV_KEY or event.value != 1:
+            return None
+        if event.code in KBD_MOVE:
+            ask["choice"] = 1 if KBD_MOVE[event.code] > 0 else 0
+            return None
         if event.code in KBD_CLAIM:
-            return "yes"
+            return "yes" if ask.get("choice") else "no"
         if event.code in KBD_RELEASE:
             return "no"
         return None
+
+    if event.type == evdev.ecodes.EV_ABS:
+        way = axis_direction(p, event)
+        if way and way.endswith("left"):
+            ask["choice"] = 0
+        elif way and way.endswith("right"):
+            ask["choice"] = 1
+        return None
+    if event.type != evdev.ecodes.EV_KEY or event.value != 1:
+        return None
     action = p.btn.get(event.code)
-    if action == "confirm":
-        return "yes"
-    if action == "back":
+    if action == "left":
+        ask["choice"] = 0
+    elif action == "right":
+        ask["choice"] = 1
+    elif action == "confirm":
+        return "yes" if ask.get("choice") else "no"
+    elif action == "back":
+        # Dismissing is always the safe outcome, so it stays available whatever
+        # this pad calls its buttons.
         return "no"
     return None
 
@@ -1129,13 +1157,35 @@ def draw_ask(screen, fonts, ask, lab):
     pygame.draw.rect(screen, BG2, (x, y, box_w, box_h))
     pygame.draw.rect(screen, MAGENTA, (x, y, box_w, box_h), 4)
 
+    # The big face is for "START ANYWAY?" and too wide for "LEAVE WITHOUT
+    # PLAYING?", which ran off both edges of the box. Take whichever fits.
     q = fonts["big"].render(ask["question"], True, YELLOW)
+    if q.get_width() > box_w - 40:
+        q = fonts["small"].render(ask["question"], True, YELLOW)
     screen.blit(q, (x + (box_w - q.get_width()) // 2, y + int(box_h * 0.16)))
     d = fonts["small"].render(ask["detail"], True, WHITE)
     screen.blit(d, (x + (box_w - d.get_width()) // 2, y + int(box_h * 0.46)))
-    foot = "%s = YES        %s = NO" % (lab["confirm"], lab["back"])
-    f = fonts["small"].render(foot, True, CYAN)
-    screen.blit(f, (x + (box_w - f.get_width()) // 2, y + int(box_h * 0.72)))
+    # Two options, one of them chosen. Pressing a button does not answer the
+    # question; moving to the answer and confirming does.
+    opts = [("NO", 0), ("YES", 1)]
+    chosen = 1 if ask.get("choice") else 0
+    bw, bh = int(box_w * 0.3), int(box_h * 0.2)
+    gap = int(box_w * 0.06)
+    total = bw * 2 + gap
+    bx = x + (box_w - total) // 2
+    by = y + int(box_h * 0.62)
+    for i, (word, _value) in enumerate(opts):
+        rect = (bx + i * (bw + gap), by, bw, bh)
+        on = (i == chosen)
+        pygame.draw.rect(screen, BG if not on else GREEN, rect)
+        pygame.draw.rect(screen, GREEN if on else DIM, rect, 3)
+        t = fonts["small"].render(word, True, BG if on else WHITE)
+        screen.blit(t, (rect[0] + (bw - t.get_width()) // 2,
+                        rect[1] + (bh - t.get_height()) // 2))
+    hint = fonts["tiny"].render(
+        "LEFT / RIGHT TO CHOOSE     %s TO CONFIRM" % lab["confirm"], True, CYAN)
+    screen.blit(hint, (x + (box_w - hint.get_width()) // 2,
+                       y + int(box_h * 0.87)))
     pygame.display.flip()
 
 
@@ -1590,17 +1640,22 @@ def main():
                 if ask is not None:
                     # A question is up; the keyboard answers it rather than
                     # doing what the key would otherwise do.
-                    if ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
-                        if ask["kind"] == "launch":
+                    if ev.key in (pygame.K_LEFT, pygame.K_RIGHT):
+                        ask["choice"] = 1 if ev.key == pygame.K_RIGHT else 0
+                    elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                        if not ask.get("choice"):
+                            ask = None          # NO was the highlighted answer
+                        elif ask["kind"] == "launch":
                             launch = True
+                            ask = None
                         else:
                             cancelled = True
-                        ask = None
+                            ask = None
                     elif ev.key == pygame.K_ESCAPE:
                         ask = None
                 elif ev.key == pygame.K_ESCAPE:
                     ask = {"kind": "cancel", "by": None,
-                           "question": "LEAVE WITHOUT PLAYING?",
+                           "question": "LEAVE WITHOUT PLAYING?", "choice": 0,
                            "detail": "THE GAME WILL NOT START"}
 
         for p in pads:
@@ -1629,14 +1684,14 @@ def main():
                         waiting = unready(pads)
                         if waiting:
                             ask = {"kind": "launch", "by": p.path,
-                                   "question": "START ANYWAY?",
+                                   "question": "START ANYWAY?", "choice": 0,
                                    "detail": "%d CONTROLLER%s NOT READY"
                                    % (len(waiting), "" if len(waiting) == 1 else "S")}
                         else:
                             launch = True
                     elif action == "cancel":
                         ask = {"kind": "cancel", "by": p.path,
-                               "question": "LEAVE WITHOUT PLAYING?",
+                               "question": "LEAVE WITHOUT PLAYING?", "choice": 0,
                                "detail": "THE GAME WILL NOT START"}
                     elif action == "test":
                         want_test = True

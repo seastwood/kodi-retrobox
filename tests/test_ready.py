@@ -44,7 +44,11 @@ class FakePad:
         self.last_press = None
         self.name = "Test Pad"
         self.btn = {e.BTN_SOUTH: "confirm", e.BTN_EAST: "back",
-                    e.BTN_START: "start", e.BTN_SELECT: "select"}
+                    e.BTN_START: "start", e.BTN_SELECT: "select",
+                    # Plenty of pads report the d-pad as four buttons, and the
+                    # question is answered by moving along it.
+                    e.BTN_DPAD_LEFT: "left", e.BTN_DPAD_RIGHT: "right",
+                    e.BTN_DPAD_UP: "up", e.BTN_DPAD_DOWN: "down"}
         self.labels = {"confirm": "A", "back": "B", "start": "START",
                        "select": "SELECT"}
 
@@ -81,14 +85,34 @@ print("select opens the button tester")
 act, _ = m.handle_event(claimed, Ev(e.BTN_SELECT), pads, 4)
 check(act == "test", "select is what opens it")
 
-print("only the pad that asked the question may answer it")
-ask = {"kind": "launch", "by": "/a", "question": "?", "detail": ""}
+print("an answer is chosen and then confirmed, not pressed")
+# Which face button is "A" is not knowable here: a guest's pad arrives through
+# the browser's standard mapping, and Xbox and Nintendo print A on different
+# buttons. A pad whose letters are reversed would otherwise answer the opposite
+# of what its owner meant, every time, silently.
+ask = {"kind": "launch", "by": "/a", "question": "?", "detail": "", "choice": 0}
+check(m.answer_event(claimed, Ev(e.BTN_SOUTH), ask) == "no",
+      "confirming while NO is highlighted answers no")
+ask["choice"] = 0
+m.answer_event(claimed, Ev(e.BTN_DPAD_RIGHT), ask)
+check(ask["choice"] == 1, "right moves the highlight to YES")
 check(m.answer_event(claimed, Ev(e.BTN_SOUTH), ask) == "yes",
-      "the asker confirms with the claim button")
+      "and confirming there answers yes")
+m.answer_event(claimed, Ev(e.BTN_DPAD_LEFT), ask)
+check(ask["choice"] == 0, "left moves it back")
+ask["choice"] = 0
+m.answer_event(claimed, Ev(e.ABS_HAT0X, value=1, type=e.EV_ABS), ask)
+check(ask["choice"] == 1, "a d-pad hat moves it too")
+
+print("the safe answer stays available whatever the pad calls its buttons")
+ask["choice"] = 1
 check(m.answer_event(claimed, Ev(e.BTN_EAST), ask) == "no",
-      "and refuses with the back button")
+      "back always dismisses, even with YES highlighted")
+
+print("and only the pad that asked may answer")
+ask = {"kind": "launch", "by": "/a", "question": "?", "detail": "", "choice": 1}
 check(m.answer_event(loose, Ev(e.BTN_SOUTH), ask) is None,
-      "somebody else pressing A does not answer for them")
+      "somebody else pressing anything does not answer for them")
 check(m.answer_event(claimed, Ev(e.BTN_SOUTH, value=0), ask) is None,
       "and a release is not an answer")
 
