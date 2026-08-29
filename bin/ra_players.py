@@ -687,6 +687,11 @@ def handle_event(p, event, pads, slots):
                                   p.cursor + KBD_ROW[event.code] * per_row))
         return None, None
 
+    if (event.type == evdev.ecodes.EV_KEY and event.value == 0
+            and p.btn.get(event.code) == "back"):
+        p.back_since = None
+        return None, None
+
     if event.type == evdev.ecodes.EV_KEY and event.value == 1:
         action = p.btn.get(event.code)
         p.seen = True
@@ -694,6 +699,7 @@ def handle_event(p, event, pads, slots):
         if action == "confirm" and p.slot is None:
             return None, claim(p, pads)
         if action == "back":
+            p.back_since = time.time()
             if p.slot is not None:
                 p.cursor, p.slot = p.slot, None
             elif not any(q.slot is not None for q in pads):
@@ -1075,6 +1081,7 @@ class Pad:
         # is plainly using, not every device the kernel can see.
         self.seen = False
         self.last_press = None       # (label, action, code) for the test screen
+        self.back_since = None       # when the back button went down, if it is
         self.color_index = None      # set by assign_colors, then left alone
         # Which physical button does what, for this pad specifically.
         self.btn, self.labels = ({}, {}) if kind == "kbd" else pad_controls(dev)
@@ -1223,6 +1230,13 @@ def draw_ask(screen, fonts, ask, lab):
 # the thing being tested. Holding *any* button works however wrong it is --
 # and a hold is not something anybody does by accident while pressing buttons
 # to see what they are called.
+# Holding back leaves the picker even when other people have claimed slots.
+# A tap still only releases your own. The hold is what makes it deliberate:
+# leaving is not a thing to do to three other people by brushing a button, and
+# it was previously impossible at all once anybody had claimed -- which left
+# somebody who had opened the wrong game with no way out but the keyboard.
+EXIT_HOLD_SECONDS = 2.0
+
 TEST_HOLD_SECONDS = 2.0
 # How often to look for controllers arriving or leaving while the tester is up.
 TEST_RESCAN_SECONDS = 1.0
@@ -1757,6 +1771,16 @@ def main():
                 except OSError:
                     event = None
 
+        if ask is None and not (launch or cancelled):
+            for p in pads:
+                if (p.back_since is not None
+                        and time.time() - p.back_since >= EXIT_HOLD_SECONDS):
+                    p.back_since = None
+                    ask = {"kind": "cancel", "by": p.path, "choice": 0,
+                           "question": "LEAVE WITHOUT PLAYING?",
+                           "detail": "THE GAME WILL NOT START"}
+                    break
+
         if want_test and not (launch or cancelled):
             # Runs its own loop and reads the pads itself, so it cannot be
             # entered from inside the reading above.
@@ -1772,12 +1796,12 @@ def main():
             note_ticks -= 1
             msg = note
         elif ready:
-            msg = "PRESS %s TO PLAY   %s = RELEASE   %s = TEST BUTTONS" % (
+            msg = "%s TO PLAY   %s = RELEASE, HOLD = LEAVE   %s = TEST" % (
                 start_btn, back_btn, test_btn)
         else:
             # With nobody claimed the back button leaves the screen, so say so
             # here -- without it the only way out is a keyboard's ESC.
-            msg = "%s = CLAIM   %s = BACK   %s = TEST BUTTONS" % (
+            msg = "%s = CLAIM   %s = BACK, HOLD = LEAVE   %s = TEST" % (
                 claim_btn, back_btn, test_btn)
         draw(screen, fonts, pads, msg, slots, playing)
         if ask is not None:

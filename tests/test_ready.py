@@ -116,6 +116,26 @@ check(m.answer_event(loose, Ev(e.BTN_SOUTH), ask) is None,
 check(m.answer_event(claimed, Ev(e.BTN_SOUTH, value=0), ask) is None,
       "and a release is not an answer")
 
+print("holding back leaves, even when other people have claimed")
+# Previously impossible once anybody had claimed, which left somebody who had
+# opened the wrong game with no way out but a keyboard.
+holder = FakePad(path="/hold")
+others = [FakePad(path="/other", slot=0)]
+m.handle_event(holder, Ev(e.BTN_EAST), [holder] + others, 4)
+check(holder.back_since is not None, "pressing back starts a hold")
+m.handle_event(holder, Ev(e.BTN_EAST, value=0), [holder] + others, 4)
+check(holder.back_since is None, "letting go ends it, so a tap is only a tap")
+
+taken = FakePad(path="/taken", slot=2)
+m.handle_event(taken, Ev(e.BTN_EAST), [taken], 4)
+check(taken.slot is None, "and a tap still releases your own slot first")
+check(taken.back_since is not None,
+      "while the hold runs on, so one press can do both")
+
+print("the hold is long enough not to happen by accident")
+check(m.EXIT_HOLD_SECONDS >= 1.5,
+      "%.1fs, which is not a brush against a button" % m.EXIT_HOLD_SECONDS)
+
 print("a keyboard is held to the same rule")
 kbd = FakePad(path="/kbd", kind="kbd")
 act, said = m.handle_event(kbd, Ev(sorted(m.KBD_START)[0]), [kbd], 4)
