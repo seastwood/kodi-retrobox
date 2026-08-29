@@ -1224,6 +1224,8 @@ def draw_ask(screen, fonts, ask, lab):
 # and a hold is not something anybody does by accident while pressing buttons
 # to see what they are called.
 TEST_HOLD_SECONDS = 2.0
+# How often to look for controllers arriving or leaving while the tester is up.
+TEST_RESCAN_SECONDS = 1.0
 
 
 def test_inputs(screen, fonts, clock, pads, lab):
@@ -1240,7 +1242,25 @@ def test_inputs(screen, fonts, clock, pads, lab):
     """
     holding = {}                  # (device, button) -> when it went down
     left = False
+    next_scan = time.time() + TEST_RESCAN_SECONDS
     while not left:
+        # The device list is not fixed while this screen is up, and this is the
+        # screen somebody opens *because* their controller is behaving oddly --
+        # so plugging one in here, or a Sunshine pad appearing when a Moonlight
+        # client connects, has to show up. It did not: the list was taken once
+        # on the way in, so a controller connected here never appeared and one
+        # unplugged sat there for ever as a row that would never say anything.
+        if time.time() >= next_scan:
+            next_scan = time.time() + TEST_RESCAN_SECONDS
+            rescan(pads)
+            live = {q.path for q in pads}
+            # A pad that leaves takes its held buttons with it. Without this
+            # its press is held for ever, and the hold that leaves this screen
+            # would fire on a controller that is not there.
+            for key in [k for k in holding if k[0] not in live]:
+                holding.pop(key, None)
+            lab = prompt_labels(pads)
+
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
                 left = True

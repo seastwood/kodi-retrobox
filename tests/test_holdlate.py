@@ -84,6 +84,34 @@ try:
     check(gone, "the rescan says something left")
     check("Holdtest Pad Two" not in [d.name for d, _ in pads3],
           "and it is no longer watched")
+    print("and the picker's own rescan does the same")
+    # What the button tester leans on: it is the screen somebody opens because
+    # a controller is behaving oddly, so a controller arriving or leaving while
+    # it is up has to show.
+    pads = []
+    rp.rescan(pads)
+    before = {q.name for q in pads}
+    check("Holdtest Pad One" in before, "the pad that was there is listed")
+
+    third = UInput(CAPS, name="Holdtest Pad Three", vendor=0x1234, product=0x567a)
+    time.sleep(0.4)
+    try:
+        rp.rescan(pads)
+        check("Holdtest Pad Three" in {q.name for q in pads},
+              "one connected afterwards appears: %s" % sorted(q.name for q in pads))
+        third.close()
+        time.sleep(0.5)
+        rp.rescan(pads)
+        check("Holdtest Pad Three" not in {q.name for q in pads},
+              "and one unplugged stops being listed")
+    finally:
+        try:
+            third.close()
+        except Exception:
+            pass
+        for q in pads:
+            q.close()
+
 finally:
     for dev in (first, second):
         try:
