@@ -667,6 +667,7 @@ def handle_event(p, event, pads, slots):
     if p.kind == "kbd":
         if event.type != evdev.ecodes.EV_KEY or event.value != 1:
             return False, None
+        p.seen = True
         if event.code in KBD_CLAIM and p.slot is None:
             return None, claim(p, pads)
         if event.code in KBD_RELEASE:
@@ -675,8 +676,9 @@ def handle_event(p, event, pads, slots):
             elif not any(q.slot is not None for q in pads):
                 return "cancel", None
         elif event.code in KBD_START:
-            if any(q.slot is not None for q in pads):
-                return "launch", None
+            if p.slot is None:
+                return None, "CLAIM A SLOT BEFORE STARTING"
+            return "launch", None
         elif event.code in KBD_MOVE and p.slot is None:
             p.cursor = max(0, min(slots - 1, p.cursor + KBD_MOVE[event.code]))
         elif event.code in KBD_ROW and p.slot is None:
@@ -686,6 +688,8 @@ def handle_event(p, event, pads, slots):
 
     if event.type == evdev.ecodes.EV_KEY and event.value == 1:
         action = p.btn.get(event.code)
+        p.seen = True
+        p.last_press = (p.labels.get(action) or "?", action, event.code)
         if action == "confirm" and p.slot is None:
             return None, claim(p, pads)
         if action == "back":
@@ -698,8 +702,16 @@ def handle_event(p, event, pads, slots):
                 # cannot cancel the launch out from under the others.
                 return "cancel", None
         elif action == "start":
-            if any(q.slot is not None for q in pads):
-                return "launch", None
+            # Your own claim, not anybody's. Starting the game while not in it
+            # was possible before, so one player could launch the moment
+            # somebody else claimed -- including out from under a player who
+            # was still choosing.
+            if p.slot is None:
+                return None, ("PRESS %s TO CLAIM A SLOT FIRST"
+                              % p.labels.get("confirm", "A"))
+            return "launch", None
+        elif action == "select":
+            return "test", None
         elif action in ("left", "right", "up", "down") and p.slot is None:
             # A d-pad is a hat on most pads and read from EV_ABS below, but on
             # plenty of generic ones it is four ordinary buttons, and those
@@ -993,6 +1005,17 @@ def pad_controls(dev):
     return btn, labels
 
 
+def unready(pads):
+    """Pads somebody is plainly using that have not claimed a slot.
+
+    "Plainly using" is the whole point. A Fourth Player session creates one
+    virtual pad per guest slot whether or not anybody is holding it, so asking
+    "is everybody ready?" about every device present would ask every single
+    time and mean nothing. A pad counts once it has been pressed.
+    """
+    return [q for q in pads if q.seen and q.slot is None]
+
+
 def prompt_labels(pads):
     """The button names to print in the footer. Pads disagree -- an Xbox pad
     confirms with A and a PlayStation pad with Cross -- and one line cannot
@@ -1015,6 +1038,12 @@ class Pad:
         self.cursor = cursor
         self.slot = None             # claimed player slot (0-based)
         self.axis_latch = 0          # debounce for stick/dpad movement
+        # Whether anybody has actually touched this pad. A Fourth Player
+        # session creates a virtual pad per guest slot whether or not anyone is
+        # holding one, so "is everybody ready?" has to mean the pads somebody
+        # is plainly using, not every device the kernel can see.
+        self.seen = False
+        self.last_press = None       # (label, action, code) for the test screen
         self.color_index = None      # set by assign_colors, then left alone
         # Which physical button does what, for this pad specifically.
         self.btn, self.labels = ({}, {}) if kind == "kbd" else pad_controls(dev)
@@ -1033,6 +1062,197 @@ def load_fonts():
             return pygame.font.Font(PIXEL_FONT, size)
         return pygame.font.Font(None, int(size * 2.1))
     return {"big": f(44), "small": f(20), "tiny": f(13)}
+
+
+def axis_direction(p, event):
+    """Which way a stick or hat has just been pushed, or None.
+
+    The same reading the cursor uses, said in words instead of a step: the test
+    screen is for finding out what a control is, and "the left stick, left" is
+    the answer somebody needs.
+    """
+    e = evdev.ecodes
+    if event.code in (e.ABS_HAT0X, e.ABS_HAT0Y):
+        if event.value == 0:
+            return None
+        if event.code == e.ABS_HAT0X:
+            return "d-pad left" if event.value < 0 else "d-pad right"
+        return "d-pad up" if event.value < 0 else "d-pad down"
+    if event.code in (e.ABS_X, e.ABS_Y):
+        if -DEADZONE <= event.value <= DEADZONE:
+            return None
+        if event.code == e.ABS_X:
+            return "stick left" if event.value < 0 else "stick right"
+        return "stick up" if event.value < 0 else "stick down"
+    return None
+
+
+def answer_event(p, event, ask):
+    """One pad's reply to a yes/no question. "yes", "no", or nothing.
+
+    Only the pad that raised the question may answer it. Anyone being able to
+    would make the question worse than useless: the whole reason it is asked is
+    that somebody may be about to start a game the others are not in.
+    """
+    if p.path != ask["by"]:
+        return None
+    if event.type != evdev.ecodes.EV_KEY or event.value != 1:
+        return None
+    if p.kind == "kbd":
+        if event.code in KBD_CLAIM:
+            return "yes"
+        if event.code in KBD_RELEASE:
+            return "no"
+        return None
+    action = p.btn.get(event.code)
+    if action == "confirm":
+        return "yes"
+    if action == "back":
+        return "no"
+    return None
+
+
+def draw_ask(screen, fonts, ask, lab):
+    """A question over the board, rather than a screen that replaces it.
+
+    The board stays visible behind it on purpose: the question is about who is
+    and is not ready, and the answer to that is what is drawn underneath.
+    """
+    w, h = screen.get_size()
+    veil = pygame.Surface((w, h), pygame.SRCALPHA)
+    veil.fill((BG[0], BG[1], BG[2], 225))
+    screen.blit(veil, (0, 0))
+
+    box_w, box_h = int(w * 0.62), int(h * 0.34)
+    x, y = (w - box_w) // 2, (h - box_h) // 2
+    pygame.draw.rect(screen, BG2, (x, y, box_w, box_h))
+    pygame.draw.rect(screen, MAGENTA, (x, y, box_w, box_h), 4)
+
+    q = fonts["big"].render(ask["question"], True, YELLOW)
+    screen.blit(q, (x + (box_w - q.get_width()) // 2, y + int(box_h * 0.16)))
+    d = fonts["small"].render(ask["detail"], True, WHITE)
+    screen.blit(d, (x + (box_w - d.get_width()) // 2, y + int(box_h * 0.46)))
+    foot = "%s = YES        %s = NO" % (lab["confirm"], lab["back"])
+    f = fonts["small"].render(foot, True, CYAN)
+    screen.blit(f, (x + (box_w - f.get_width()) // 2, y + int(box_h * 0.72)))
+    pygame.display.flip()
+
+
+TEST_HOLD_SECONDS = 1.2
+
+
+def test_inputs(screen, fonts, clock, pads, lab):
+    """Name every button as it is pressed, on every pad at once.
+
+    Controllers disagree about everything: which face button is printed A,
+    whether Start is called Start, where Select went. The picker names buttons
+    by what is printed on them, which is right and is no help at all to
+    somebody holding a pad they have never seen -- the reported experience was
+    mashing buttons with no idea which was which.
+
+    So this says it out loud. Press anything and it names it, per pad, in that
+    pad's own colour. Nothing here changes anything; it is a mirror.
+    """
+    holding = {}
+    left = False
+    while not left:
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                left = True
+            elif ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
+                left = True
+
+        now = time.time()
+        for q in pads:
+            try:
+                event = q.dev.read_one()
+            except OSError:
+                event = None
+            while event is not None:
+                if event.type == evdev.ecodes.EV_KEY:
+                    if q.kind == "kbd":
+                        name, act = "KEY %d" % event.code, "keyboard"
+                    else:
+                        act = q.btn.get(event.code)
+                        name = q.labels.get(act) or "?"
+                    if event.value == 1:
+                        q.seen = True
+                        q.last_press = (name, act, event.code)
+                        if act == "back":
+                            holding[q.path] = now
+                    elif event.value == 0 and act == "back":
+                        holding.pop(q.path, None)
+                elif event.type == evdev.ecodes.EV_ABS:
+                    way = axis_direction(q, event)
+                    if way:
+                        q.seen = True
+                        q.last_press = (way.upper(), None, event.code)
+                try:
+                    event = q.dev.read_one()
+                except OSError:
+                    event = None
+
+        held = max((now - t for t in holding.values()), default=0.0)
+        if held >= TEST_HOLD_SECONDS:
+            left = True
+        draw_test(screen, fonts, pads, lab, min(1.0, held / TEST_HOLD_SECONDS))
+        clock.tick(60)
+
+    # Leaving on the back button must not also release somebody's slot.
+    for q in pads:
+        try:
+            while q.dev.read_one() is not None:
+                pass
+        except OSError:
+            pass
+
+
+def draw_test(screen, fonts, pads, lab, held):
+    w, h = screen.get_size()
+    screen.fill(BG)
+    for i in range(0, h, 4):
+        pygame.draw.rect(screen, BG2, (0, i, w, 2))
+
+    title = fonts["big"].render("TEST YOUR CONTROLLER", True, YELLOW)
+    screen.blit(title, ((w - title.get_width()) // 2, int(h * 0.06)))
+    sub = fonts["tiny"].render(
+        "PRESS ANY BUTTON AND THIS SAYS WHAT IT IS", True, DIM)
+    screen.blit(sub, ((w - sub.get_width()) // 2, int(h * 0.155)))
+
+    y = int(h * 0.26)
+    row = max(34, int(h * 0.09))
+    for q in pads:
+        draw_icon(screen, q, int(w * 0.16), y, 30)
+        nm = fonts["small"].render(q.name[:22], True, WHITE)
+        screen.blit(nm, (int(w * 0.16) + 42, y + 4))
+        if q.last_press:
+            name, act, code = q.last_press
+            said = name if not act else "%s   (%s)" % (name, act.upper())
+            colour = GREEN if act in ("confirm", "back", "start") else CYAN
+        else:
+            said, colour = "waiting...", DIM
+        txt = fonts["small"].render(said, True, colour)
+        screen.blit(txt, (int(w * 0.56), y + 4))
+        raw = fonts["tiny"].render(
+            "code %d" % q.last_press[2] if q.last_press else "", True, DIM)
+        screen.blit(raw, (int(w * 0.84), y + 8))
+        y += row
+
+    # What the picker itself needs, in this pad's own words.
+    key = fonts["tiny"].render(
+        "THE PICKER USES:   %s = CLAIM     %s = RELEASE     %s = START"
+        % (lab["confirm"], lab["back"], lab["start"]), True, DIM)
+    screen.blit(key, ((w - key.get_width()) // 2, int(h * 0.8)))
+
+    foot = fonts["small"].render(
+        "HOLD %s TO GO BACK" % lab["back"], True, MAGENTA)
+    screen.blit(foot, ((w - foot.get_width()) // 2, int(h * 0.88)))
+    if held > 0:
+        bw = int(w * 0.3)
+        bx, by = (w - bw) // 2, int(h * 0.94)
+        pygame.draw.rect(screen, BG2, (bx, by, bw, 10))
+        pygame.draw.rect(screen, GREEN, (bx, by, int(bw * held), 10))
+    pygame.display.flip()
 
 
 def draw(screen, fonts, pads, message, slots):
@@ -1275,6 +1495,7 @@ def main():
 
     launch = False
     cancelled = False
+    ask = None                      # a yes/no question waiting on an answer
     rescan_tick = 0
     note = ""
     note_ticks = 0
@@ -1292,11 +1513,28 @@ def main():
                     p.cursor = slots - 1
                 if p.slot is not None and p.slot >= slots:
                     p.slot = None
+        lab = prompt_labels(pads)
+        want_test = False
+
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
                 cancelled = True
-            elif ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
-                cancelled = True
+            elif ev.type == pygame.KEYDOWN:
+                if ask is not None:
+                    # A question is up; the keyboard answers it rather than
+                    # doing what the key would otherwise do.
+                    if ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                        if ask["kind"] == "launch":
+                            launch = True
+                        else:
+                            cancelled = True
+                        ask = None
+                    elif ev.key == pygame.K_ESCAPE:
+                        ask = None
+                elif ev.key == pygame.K_ESCAPE:
+                    ask = {"kind": "cancel", "by": None,
+                           "question": "LEAVE WITHOUT PLAYING?",
+                           "detail": "THE GAME WILL NOT START"}
 
         for p in pads:
             try:
@@ -1304,34 +1542,69 @@ def main():
             except OSError:
                 event = None
             while event is not None:
-                action, said = handle_event(p, event, pads, slots)
-                if action == "launch":
-                    launch = True
-                elif action == "cancel":
-                    cancelled = True
-                if said:
-                    note, note_ticks = said, 120
+                if ask is not None:
+                    reply = answer_event(p, event, ask)
+                    if reply == "yes":
+                        if ask["kind"] == "launch":
+                            launch = True
+                        else:
+                            cancelled = True
+                        ask = None
+                    elif reply == "no":
+                        ask = None
+                        note, note_ticks = "NOT YET", 90
+                else:
+                    action, said = handle_event(p, event, pads, slots)
+                    if action == "launch":
+                        # Everybody who is holding a pad gets asked about,
+                        # because the reason to ask is somebody having let go
+                        # of their slot by accident a moment ago.
+                        waiting = unready(pads)
+                        if waiting:
+                            ask = {"kind": "launch", "by": p.path,
+                                   "question": "START ANYWAY?",
+                                   "detail": "%d CONTROLLER%s NOT READY"
+                                   % (len(waiting), "" if len(waiting) == 1 else "S")}
+                        else:
+                            launch = True
+                    elif action == "cancel":
+                        ask = {"kind": "cancel", "by": p.path,
+                               "question": "LEAVE WITHOUT PLAYING?",
+                               "detail": "THE GAME WILL NOT START"}
+                    elif action == "test":
+                        want_test = True
+                    if said:
+                        note, note_ticks = said, 120
                 try:
                     event = p.dev.read_one()
                 except OSError:
                     event = None
 
+        if want_test and not (launch or cancelled):
+            # Runs its own loop and reads the pads itself, so it cannot be
+            # entered from inside the reading above.
+            test_inputs(screen, fonts, clock, pads, lab)
+
         ready = sum(1 for p in pads if p.slot is not None)
         kbd = any(p.kind == "kbd" for p in pads)
-        lab = prompt_labels(pads)
         claim_btn = lab["confirm"] + ("/X" if kbd else "")
         back_btn = lab["back"] + ("/Z" if kbd else "")
         start_btn = lab["start"] + ("/ENTER" if kbd else "")
+        test_btn = lab.get("select") or "SELECT"
         if note_ticks > 0:
             note_ticks -= 1
             msg = note
         elif ready:
-            msg = "PRESS %s TO PLAY    %s = RELEASE" % (start_btn, back_btn)
+            msg = "PRESS %s TO PLAY   %s = RELEASE   %s = TEST BUTTONS" % (
+                start_btn, back_btn, test_btn)
         else:
             # With nobody claimed the back button leaves the screen, so say so
             # here -- without it the only way out is a keyboard's ESC.
-            msg = "%s = CLAIM    %s = BACK" % (claim_btn, back_btn)
+            msg = "%s = CLAIM   %s = BACK   %s = TEST BUTTONS" % (
+                claim_btn, back_btn, test_btn)
         draw(screen, fonts, pads, msg, slots)
+        if ask is not None:
+            draw_ask(screen, fonts, ask, lab)
         clock.tick(60)
 
     override = write_override(pads, slots, fresh) if launch else None
