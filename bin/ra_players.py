@@ -1029,13 +1029,43 @@ def prompt_labels(pads):
     return out
 
 
+# What fourth-player's guests call themselves, keyed by the pad they drive.
+# evdev knows a device called "Fourth Player 1" and nothing else, so without
+# this the picker shows the socket rather than the person. Absent unless that
+# project is installed and a session is open, which is the normal case.
+GUEST_NAMES = os.path.expanduser("~/.local/state/fourth-player/pad-names.json")
+_guest_names = (None, {})          # (mtime, mapping)
+
+
+def guest_names():
+    """Names for remote pads, re-read only when the file changes."""
+    global _guest_names
+    try:
+        stamp = os.stat(GUEST_NAMES).st_mtime_ns
+    except OSError:
+        _guest_names = (None, {})
+        return {}
+    if stamp != _guest_names[0]:
+        try:
+            with open(GUEST_NAMES) as fh:
+                data = json.load(fh)
+            names = {str(k): str(v) for k, v in data.items() if k and v}
+        except (OSError, ValueError, AttributeError):
+            names = {}
+        _guest_names = (stamp, names)
+    return _guest_names[1]
+
+
 class Pad:
     def __init__(self, index, path, dev, kind="pad", cursor=0):
         self.kind = kind             # "pad" or "kbd"
         self.index = index           # RetroArch joypad index, None for a keyboard
         self.path = path
         self.dev = dev
-        self.name = dev.name
+        self.name = dev.name         # the device name; RetroArch matches on it
+        # What to put on screen for it, which is not the same thing: a guest
+        # who gave a name is a person, not a socket.
+        self.display = guest_names().get(dev.name, dev.name)
         self.cursor = cursor
         self.slot = None             # claimed player slot (0-based)
         self.axis_latch = 0          # debounce for stick/dpad movement
@@ -1274,7 +1304,7 @@ def draw_test(screen, fonts, pads, lab, held):
     row = max(34, int(h * 0.09))
     for q in pads:
         draw_icon(screen, q, int(w * 0.16), y, 30)
-        nm = fonts["small"].render(q.name[:22], True, WHITE)
+        nm = fonts["small"].render(q.display[:22], True, WHITE)
         screen.blit(nm, (int(w * 0.16) + 42, y + 4))
         if q.last_press:
             name, act, code = q.last_press
@@ -1413,7 +1443,7 @@ def draw(screen, fonts, pads, message, slots, playing=None):
             draw_icon(screen, owner, x + (slot_w - icon) // 2, icon_y, icon)
             txt = fonts["small"].render("READY", True, GREEN)
             screen.blit(txt, (x + (slot_w - txt.get_width()) // 2, y + slot_h - 74))
-            nt = fonts["tiny"].render(owner.name[:name_chars], True, WHITE)
+            nt = fonts["tiny"].render(owner.display[:name_chars], True, WHITE)
             screen.blit(nt, (x + (slot_w - nt.get_width()) // 2, y + slot_h - 40))
         elif hovered:
             # Side by side rather than stacked: two controllers hovering the
@@ -1438,7 +1468,7 @@ def draw(screen, fonts, pads, message, slots, playing=None):
     free = [p for p in pads if p.slot is None]
     if free:
         icon = 26
-        entries = [(q, fonts["tiny"].render(q.name[:12], True, DIM)) for q in free]
+        entries = [(q, fonts["tiny"].render(q.display[:12], True, DIM)) for q in free]
         widths = [icon + 6 + text.get_width() for _q, text in entries]
         ix = (w - (sum(widths) + 24 * (len(entries) - 1))) // 2
         for (q, text), width in zip(entries, widths):
@@ -1550,6 +1580,9 @@ def rescan(pads):
             dev.close()                 # keep the handle we are already reading
         else:
             pads.append(Pad(index, path, dev, kind))
+
+    for p in pads:
+        p.display = guest_names().get(p.name, p.name)
 
     # Pads first in joypad order, then keyboards, which have no index to sort on.
     pads.sort(key=lambda p: (p.kind != "pad", p.index if p.index is not None else 0))
