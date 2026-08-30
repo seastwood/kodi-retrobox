@@ -235,17 +235,19 @@ FAILURES = [
 ]
 
 
-def diagnose(path, code, seconds):
+def diagnose(path, code, seconds, asked=False):
     """Why a launch failed, in words, or None if it looks like a normal run.
 
     A game that ran for a while and exited is somebody quitting, whatever the
     exit code -- only a launch that dies quickly is a failure worth reporting.
     """
-    if code < 0:
-        # Killed by a signal. This used to be filtered out by the "ran for a
-        # while, so somebody quit" rule above, which meant a game that
-        # segfaulted after two minutes said nothing at all and looked exactly
-        # like a game somebody had finished with.
+    if code < 0 and not asked:
+        # Killed by a signal, with nobody having asked it to stop. This used
+        # to be filtered out by the "ran for a while, so somebody quit" rule
+        # below, which meant a game that fell over after two minutes said
+        # nothing at all and looked exactly like a game somebody had finished
+        # with. Deaths on the way out of a quit we asked for are still
+        # ignored: more than one core here segfaults every time it closes.
         return "The game stopped unexpectedly (signal %d)" % -code
     if seconds > 30 and code in (0, 1):
         return None
@@ -436,6 +438,12 @@ def netcmd_port():
     return 55355
 
 
+# When we last asked a game to close. Some cores fall over on the way out --
+# SkyEmu segfaults on every clean exit here -- and a crash during a shutdown
+# somebody asked for is not news. A crash nobody asked for is.
+QUIT_ASKED = [0.0]
+
+
 def send_quit():
     """Ask RetroArch to quit, over the command interface it already exposes.
 
@@ -445,6 +453,7 @@ def send_quit():
     the bar watches every pad and the combo does not. Quitting from here makes
     the bar mean what it shows, whichever pad is holding it.
     """
+    QUIT_ASKED[0] = time.time()
     return send_command("QUIT")
 
 
@@ -863,7 +872,12 @@ def run_retroarch(args, override=None, shader=None, repick=None,
         # Closed on purpose, to put the picker back over the same game. Not a
         # failure however RetroArch chose to exit.
         return REPICK
-    reason = diagnose(LAUNCH_LOG, code, time.time() - started)
+    asked = time.time() - QUIT_ASKED[0] < 30
+    if code < 0:
+        log_line("the game died on signal %d (%s)"
+                 % (-code, "on the way out of a quit we asked for" if asked
+                    else "nobody asked it to stop"))
+    reason = diagnose(LAUNCH_LOG, code, time.time() - started, asked)
     if reason:
         notify("Could not start the game", reason)
         return 1

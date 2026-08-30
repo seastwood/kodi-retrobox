@@ -98,6 +98,15 @@ check(rp.diagnose(log, 0, 300) is None,
       "an ordinary quit after five minutes is still silence")
 check(rp.diagnose(log, 1, 300) is None, "and so is code 1")
 
+print("but a crash on the way out of a quit we asked for is not news")
+# SkyEmu segfaults every time it closes, on every GBA game here. Reporting
+# that would mean a scare message after every ordinary quit.
+check(rp.diagnose(log, -11, 300, asked=True) is None,
+      "dying during a shutdown we asked for stays quiet")
+check(rp.diagnose(log, -11, 300, asked=False) is not None,
+      "dying when nobody asked does not")
+check(rp.QUIT_ASKED[0] == 0.0, "and nothing has asked yet in this test")
+
 print("the picker writes where RetroArch cannot overwrite it")
 check(rp.PICKER_LOG != rp.LAUNCH_LOG,
       "its own log, not the one the emulator streams into")
