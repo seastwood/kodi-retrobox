@@ -31,7 +31,18 @@ panel.
 * **A player picker before each game** assigns controllers to ports, sized to
   the game — one-player games with one pad skip it entirely. It reads each
   pad's real buttons from RetroArch's own controller profiles, so "A" is the
-  button printed A whether that is an Xbox pad or a Switch pad.
+  button printed A whether that is an Xbox pad or a Switch pad. A slot
+  somebody has claimed belongs to them: other cursors step straight over it,
+  and anybody still pointing at it is moved off, so the board never offers a
+  seat that pressing confirm can only refuse.
+* **Hold Select for two seconds to bring the picker back mid-game.** Somebody
+  arriving after the game started — a stream joined late, a fourth person
+  turning up — could otherwise only be given controls by stopping the game by
+  hand. The game is saved, closed, re-picked and resumed exactly where it was.
+  Everyone's numbered save slots are copied out of the way first and put back
+  the moment the new run has read what it needed, so carrying a game across
+  costs nobody a save; if the game will not reopen, the position is kept as
+  that game's automatic state rather than discarded.
 * **Hold Start for two seconds to quit**, with a progress bar drawn over the
   running game. Games auto-save and auto-resume, so quitting is closer to
   putting a console to sleep.
@@ -247,8 +258,9 @@ back yourself. See [INSTALL.md](INSTALL.md#restoring-from-a-backup).
 
     <clone>/tests/  →  run any of them with python3
 
-223 checks covering the button mapping, the player picker, the sync pipeline,
-the config guard, the hold-to-exit feedback, Bluetooth pairing and USB/IP. They
+428 checks covering the button mapping, the player picker, the sync pipeline,
+the config guard, the hold-to-exit feedback, carrying a game across a
+re-pick without losing a save state, Bluetooth pairing and USB/IP. They
 use synthetic devices and fake ROM trees, so they touch nothing real, and
 `install.sh` runs them as its last phase.
 
