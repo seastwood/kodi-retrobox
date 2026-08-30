@@ -420,8 +420,14 @@ p0.slot, p1.slot = 0, 3
 text = override_text([p0, p1], 8)
 check('input_player1_reserved_device = "Nintendo Co., Ltd. Pro Controller"' in text,
       "player 1 reserved for the Pro Controller")
-check('input_player1_device_reservation_type = "1"' in text,
-      "and marked preferred")
+# "Reserved" (2), not "preferred" (1). Preferred is a suggestion that
+# autoconfiguration may ignore, and the picker's whole job is deciding who
+# plays -- a port that the picker gave to one controller and RetroArch gave
+# to another leaves the person who claimed it driving nothing.
+check('input_player1_device_reservation_type = "2"' in text,
+      "and marked reserved, which is binding")
+check('input_player1_device_reservation_type = "1"' not in text,
+      "not merely preferred")
 check('input_player4_reserved_device = "Xbox Wireless Controller"' in text,
       "player 4 reserved for the Xbox pad")
 
