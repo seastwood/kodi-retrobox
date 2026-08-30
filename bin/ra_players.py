@@ -40,6 +40,12 @@ KODI_SEND = "/usr/bin/kodi-send"
 LAUNCH_LOG = os.path.expanduser("~/.local/state/retroarch/last-launch.log")
 # Ours, and only ours. See log_line.
 PICKER_LOG = os.path.expanduser("~/.local/state/retroarch/ra_players.log")
+# Where the config fragments handed to RetroArch are written. Not /tmp: this
+# file says which pad is which player, and fourth-player reads it back to tell
+# a guest which player they are -- from a service with PrivateTmp=yes, which
+# gets a /tmp of its very own and could never see a word of it.
+OVERRIDE_DIR = os.path.expanduser("~/.local/state/retroarch/overrides")
+OVERRIDE_KEEP = 24 * 3600        # how long a used fragment is worth keeping
 # What the screen blanking was set to before a game turned it off. Written to
 # disk because a `finally` does not run when the process is killed outright,
 # and the screen would then never blank again.
@@ -1933,9 +1939,27 @@ FRESH_LINES = ('savestate_auto_load = "false"\n'
                'savestate_auto_save = "false"\n')
 
 
+def new_override(prefix):
+    """An empty config fragment, somewhere anything on this machine can read.
+
+    Old ones are swept as they are made rather than on a timer: they are tiny,
+    they are only interesting while the game they configured is running, and
+    nothing else is ever going to come along and tidy them up.
+    """
+    os.makedirs(OVERRIDE_DIR, exist_ok=True)
+    cutoff = time.time() - OVERRIDE_KEEP
+    for old in glob.glob(os.path.join(OVERRIDE_DIR, "*.cfg")):
+        try:
+            if os.stat(old).st_mtime < cutoff:
+                os.unlink(old)
+        except OSError:
+            pass
+    return tempfile.mkstemp(prefix=prefix, suffix=".cfg", dir=OVERRIDE_DIR)
+
+
 def fresh_override():
     """A config that only turns the automatic save state off."""
-    fd, path = tempfile.mkstemp(prefix="ra_fresh_", suffix=".cfg")
+    fd, path = new_override("ra_fresh_")
     with os.fdopen(fd, "w") as fh:
         fh.write(NO_PAD_MENU)
         fh.write(FRESH_LINES)
@@ -1944,7 +1968,7 @@ def fresh_override():
 
 def guard_override():
     """The smallest config worth passing: the one that shuts the menu."""
-    fd, path = tempfile.mkstemp(prefix="ra_guard_", suffix=".cfg")
+    fd, path = new_override("ra_guard_")
     with os.fdopen(fd, "w") as fh:
         fh.write(NO_PAD_MENU)
     return path
@@ -1958,7 +1982,7 @@ def write_override(pads, slots, fresh=False, slot=None):
     # board still have to be parked, or a stray pad drives a player nobody
     # picked.
     ports = max(slots, MAX_PLAYERS)
-    fd, path = tempfile.mkstemp(prefix="ra_players_", suffix=".cfg")
+    fd, path = new_override("ra_players_")
     with os.fdopen(fd, "w") as fh:
         fh.write(NO_PAD_MENU)
         reserved = {}
@@ -1974,15 +1998,29 @@ def write_override(pads, slots, fresh=False, slot=None):
                 fh.write('input_player%d_joypad_index = "99"\n' % (s + 1))
         # Hold each port for the controller that claimed it, so unplugging a
         # pad mid-game and plugging it back in returns it to the same player
-        # instead of the first free port. "Preferred" (1) rather than
-        # "Reserved" (2) on purpose: if the name ever fails to match, the port
-        # still behaves the way it does today rather than staying empty.
+        # instead of the first free port.
+        #
+        # "Reserved" (2), not "Preferred" (1). Preferred is a suggestion, and
+        # autoconfiguration is free to ignore it -- which it does the moment
+        # anything else is plugged in. With a Moonlight client connected,
+        # Sunshine's four virtual pads appeared first and took all four ports:
+        #
+        #   [Autoconf] Remote player 1 configured in port 1.
+        #   [ERROR] [Autoconf] No free and unreserved player slots found for
+        #           adding new device "Fourth Player 4"!
+        #
+        # so the pad that had claimed player 1 on the picker screen drove
+        # nothing at all, while a device nobody picked drove the game. The
+        # earlier reasoning for preferring "preferred" was that a name which
+        # failed to match would leave the port empty; an empty port is a much
+        # smaller problem than the wrong device in it, and the name written
+        # here is read straight off the device a moment earlier.
         for s in range(ports):
             name = reserved.get(s)
             fh.write('input_player%d_reserved_device = "%s"\n'
                      % (s + 1, name or ""))
             fh.write('input_player%d_device_reservation_type = "%d"\n'
-                     % (s + 1, 1 if name else 0))
+                     % (s + 1, 2 if name else 0))
         if kbd_slot is not None:
             # RetroArch merges every keyboard into one input, so a keyboard
             # player's binds have to live on exactly one port -- and be cleared
