@@ -55,7 +55,15 @@ HOLD_SECONDS = 2.0               # what RetroArch itself waits for
 HOLD_GRACE = 0.45                # Start is an ordinary in-game button: draw
                                  # nothing until the hold is clearly deliberate
 HOLD_RESCAN_SECONDS = 3.0        # how often to look for a pad that turned up
-REPICK_SECONDS = 2.0             # hold Select this long to change players
+REPICK_SECONDS = 5.0             # hold Select this long to change players
+
+# RetroArch opens its own menu on a held Select (combo 8), which is the same
+# gesture as asking for the player picker and, worse, a way into the whole
+# emulator for anybody holding a pad -- including a guest in another house,
+# whose entire permitted vocabulary is meant to be "move a gamepad". Turned
+# off for every game this launches, so a config that has drifted cannot open
+# it again. The menu is still there on a keyboard, where F1 opens it.
+NO_PAD_MENU = 'input_menu_toggle_gamepad_combo = "0"\n' 
 REPICK = 90                      # run_retroarch: "the players are changing"
 # Somebody in a browser asking for the same thing. Written by fourth-player,
 # which already writes the guest names into this directory, and read here --
@@ -352,7 +360,7 @@ def restore_screen(state):
         pass
 
 
-def hold_fraction(elapsed):
+def hold_fraction(elapsed, seconds=None):
     """How far along the hold is, or None while it is still too early to say.
 
     Measured from zero rather than from the grace point, so the bar appears
@@ -361,7 +369,7 @@ def hold_fraction(elapsed):
     """
     if elapsed < HOLD_GRACE:
         return None
-    return max(0.0, min(1.0, elapsed / HOLD_SECONDS))
+    return max(0.0, min(1.0, elapsed / (seconds or HOLD_SECONDS)))
 
 
 class HoldBar:
@@ -676,8 +684,13 @@ def watch_hold_to_exit(stop, bar=None, repick=None, rom=""):
     # player picker back over it. Both are ordinary in-game buttons, so both
     # wait out HOLD_GRACE before they admit to being a hold at all.
     holds = {"start": {"since": None, "done": False,
+                       "seconds": HOLD_SECONDS,
                        "caption": "HOLD TO EXIT"},
+             # Longer, because Select is an ordinary in-game button on more
+             # games than Start is, and interrupting a game by accident costs
+             # everybody playing it.
              "select": {"since": None, "done": False,
+                        "seconds": REPICK_SECONDS,
                         "caption": "HOLD TO CHANGE PLAYERS"}}
     showing = False
     next_scan = time.time() + HOLD_RESCAN_SECONDS
@@ -729,7 +742,8 @@ def watch_hold_to_exit(stop, bar=None, repick=None, rom=""):
             for name, hold in holds.items():
                 if hold["since"] is None:
                     continue
-                fraction = hold_fraction(time.time() - hold["since"])
+                fraction = hold_fraction(time.time() - hold["since"],
+                                         hold["seconds"])
                 if fraction is None:
                     continue
                 bar.show(fraction, hold["caption"])
@@ -1801,7 +1815,16 @@ def fresh_override():
     """A config that only turns the automatic save state off."""
     fd, path = tempfile.mkstemp(prefix="ra_fresh_", suffix=".cfg")
     with os.fdopen(fd, "w") as fh:
+        fh.write(NO_PAD_MENU)
         fh.write(FRESH_LINES)
+    return path
+
+
+def guard_override():
+    """The smallest config worth passing: the one that shuts the menu."""
+    fd, path = tempfile.mkstemp(prefix="ra_guard_", suffix=".cfg")
+    with os.fdopen(fd, "w") as fh:
+        fh.write(NO_PAD_MENU)
     return path
 
 
@@ -1815,6 +1838,7 @@ def write_override(pads, slots, fresh=False, slot=None):
     ports = max(slots, MAX_PLAYERS)
     fd, path = tempfile.mkstemp(prefix="ra_players_", suffix=".cfg")
     with os.fdopen(fd, "w") as fh:
+        fh.write(NO_PAD_MENU)
         reserved = {}
         for p in sorted((p for p in claimed if p.kind == "pad"),
                         key=lambda p: p.slot):
@@ -1954,7 +1978,7 @@ def play_once(args, cap, shader, fresh, asked, repick):
     if not asked and not needs_picker(len(joypads), cap):
         for _kind, _index, _path, dev in pads_raw:
             dev.close()
-        override = fresh_override() if fresh else None
+        override = fresh_override() if fresh else guard_override()
         repick.override = override
         return run_retroarch(args, override, shader=shader, repick=repick,
                              load_slot=load_slot)

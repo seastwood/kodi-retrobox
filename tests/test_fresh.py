@@ -79,12 +79,45 @@ check(seen.get("override") and 'savestate_auto_load = "false"'
 if seen.get("override"):
     os.unlink(seen["override"])
 
-print("...and an ordinary launch still gets none")
+print("...and an ordinary launch says nothing about save states")
 seen.clear()
 sys.argv = ["ra_players.py", "--max-players", "1", "-f", "-L", "core.so", "rom.sfc"]
 rp.main()
 check(seen.get("args") == ["-f", "-L", "core.so", "rom.sfc"], "arguments unchanged")
-check(seen.get("override") is None, "and no override at all")
+plain = open(seen["override"]).read() if seen.get("override") else ""
+check("savestate_auto" not in plain,
+      "an ordinary launch leaves the save state alone: %r" % plain)
+
+# Every launch gets one thing whatever else it gets: RetroArch's own menu is
+# on a held Select by default, which is both the gesture that asks for the
+# player picker and a way into the whole emulator for anyone holding a pad --
+# guests included, whose entire permitted vocabulary is "move a gamepad".
+print("every launch shuts the pad's way into the emulator menu")
+for label, argv in (
+        ("an ordinary launch",
+         ["ra_players.py", "--max-players", "1", "-f", "-L", "c.so", "r.sfc"]),
+        ("a fresh one",
+         ["ra_players.py", "--fresh", "--max-players", "1", "-f", "-L",
+          "c.so", "r.sfc"])):
+    seen.clear()
+    sys.argv = argv
+    rp.main()
+    text = open(seen["override"]).read() if seen.get("override") else ""
+    check('input_menu_toggle_gamepad_combo = "0"' in text,
+          "%s cannot open the menu from a pad" % label)
+    if seen.get("override"):
+        os.unlink(seen["override"])
+
+print("and the two holds are not the same length")
+check(rp.REPICK_SECONDS > rp.HOLD_SECONDS,
+      "asking for the picker is the longer hold: %s vs %s"
+      % (rp.REPICK_SECONDS, rp.HOLD_SECONDS))
+check(rp.hold_fraction(2.0, rp.REPICK_SECONDS) < 1.0,
+      "two seconds of Select is not yet a request")
+check(rp.hold_fraction(5.0, rp.REPICK_SECONDS) >= 1.0,
+      "five is")
+check(rp.hold_fraction(2.0) >= 1.0,
+      "while Start still quits in two, as it always did")
 
 print(("FAILED: %d" % len(fails)) if fails else "test_fresh: all ok")
 sys.exit(1 if fails else 0)
