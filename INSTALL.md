@@ -179,7 +179,8 @@ a controller, so it needs no keyboard either.
 yours in RetroArch's own menu. Nothing in this repository carries credentials.
 
 **USB over IP** borrows a controller plugged into another machine. Run
-`sudo ~/retrobox/bin/usbip-setup-root.sh` once; see the *USB over IP*
+`sudo ~/.kodi/addons/script.usbip/bin/usbip-setup-root.sh` once; see the
+*USB over IP*
 section of the README for the two steps that follow.
 
 **Backups** do nothing until you name a destination in `backup/backup.conf`.

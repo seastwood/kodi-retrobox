@@ -172,10 +172,18 @@ edits them with a controller, so that needs no keyboard either.
 
 The USB DEVICES entry borrows a controller plugged into another machine (a Pi,
 say) over the network, so a pad in another room shows up here as a local USB
-device. Everything the add-on does needs root, which it cannot arrange for
-itself, so run this once:
+device.
 
-    sudo ~/retrobox/bin/usbip-setup-root.sh
+The add-on is its own project — [kodi-usbip][usbip] — and `install.sh` clones
+it into `~/.kodi/addons/script.usbip` rather than carrying a second copy here.
+One copy, and it is the one its own tests run against.
+
+[usbip]: https://github.com/seastwood/kodi-usbip
+
+Everything the add-on does needs root, which it cannot arrange for itself, so
+run this once:
+
+    sudo ~/.kodi/addons/script.usbip/bin/usbip-setup-root.sh
 
 It installs the tools, loads `vhci-hcd` and makes that permanent, and grants
 the user passwordless sudo for the `usbip` binary alone. Re-running it is

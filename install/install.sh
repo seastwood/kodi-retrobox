@@ -202,6 +202,49 @@ else
   HOME="$TARGET_HOME" "$HERE/deploy.sh" | sed 's/^/   /' || bad "deploy.sh failed"
 fi
 
+# --------------------------------------------------------- outside add-ons --
+# Add-ons that are their own projects. They are cloned rather than carried
+# here, so there is one copy of each and it is the one its own tests run
+# against -- two copies of the same add-on in two repositories drift the
+# moment either is touched, and the drift is silent.
+say "Add-ons kept in their own repositories"
+OUTSIDE_ADDONS="script.usbip https://github.com/seastwood/kodi-usbip.git"
+echo "$OUTSIDE_ADDONS" | while read -r id url; do
+  [ -n "$id" ] || continue
+  dst="$TARGET_HOME/.kodi/addons/$id"
+  if [ "$DRY" = 1 ]; then
+    skip "would clone $url into $dst"
+    continue
+  fi
+  if ! command -v git >/dev/null 2>&1; then
+    warn "git is not installed, so $id was not fetched"
+    continue
+  fi
+  # An earlier install symlinked this out of the repository. Move it aside the
+  # same way deploy.sh does rather than deleting something somebody may have
+  # edited in place.
+  if [ -L "$dst" ]; then
+    rm -f "$dst"
+    ok "replaced the old link to $id"
+  elif [ -d "$dst" ] && [ ! -d "$dst/.git" ]; then
+    mv "$dst" "$dst.replaced.$(date +%s)"
+    ok "kept the old $id as $id.replaced.*"
+  fi
+  if [ -d "$dst/.git" ]; then
+    if git -C "$dst" pull --ff-only --quiet 2>/dev/null; then
+      ok "$id up to date ($(git -C "$dst" rev-parse --short HEAD))"
+    else
+      # Local edits, a detached head, no network: all reasons to leave it
+      # alone and say so rather than throwing away somebody's work.
+      warn "$id could not be updated; left as it is"
+    fi
+  elif git clone --quiet "$url" "$dst" 2>/dev/null; then
+    ok "$id cloned from $url"
+  else
+    warn "could not clone $url -- USB over IP will be missing until it is"
+  fi
+done
+
 # ------------------------------------------------------------------ assets --
 say "Fonts and icons"
 if [ -f "$REPO/assets/fonts/PressStart2P.ttf" ]; then
