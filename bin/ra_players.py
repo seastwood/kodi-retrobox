@@ -38,6 +38,8 @@ KODI_SEND = "/usr/bin/kodi-send"
 # Everything RetroArch said on the last launch. The Kodi plugin throws the
 # child's output away, so without this a failure leaves no trace anywhere.
 LAUNCH_LOG = os.path.expanduser("~/.local/state/retroarch/last-launch.log")
+# Ours, and only ours. See log_line.
+PICKER_LOG = os.path.expanduser("~/.local/state/retroarch/ra_players.log")
 # What the screen blanking was set to before a game turned it off. Written to
 # disk because a `finally` does not run when the process is killed outright,
 # and the screen would then never blank again.
@@ -65,6 +67,7 @@ REPICK_SECONDS = 2.0             # hold Select this long to change players
 # it again. The menu is still there on a keyboard, where F1 opens it.
 NO_PAD_MENU = 'input_menu_toggle_gamepad_combo = "0"\n' 
 REPICK = 90                      # run_retroarch: "the players are changing"
+RESUME_WAIT = 45                 # how long a relaunched game gets to answer
 # Somebody in a browser asking for the same thing. Written by fourth-player,
 # which already writes the guest names into this directory, and read here --
 # the two programs share files, never code.
@@ -238,6 +241,12 @@ def diagnose(path, code, seconds):
     A game that ran for a while and exited is somebody quitting, whatever the
     exit code -- only a launch that dies quickly is a failure worth reporting.
     """
+    if code < 0:
+        # Killed by a signal. This used to be filtered out by the "ran for a
+        # while, so somebody quit" rule above, which meant a game that
+        # segfaulted after two minutes said nothing at all and looked exactly
+        # like a game somebody had finished with.
+        return "The game stopped unexpectedly (signal %d)" % -code
     if seconds > 30 and code in (0, 1):
         return None
     try:
@@ -528,6 +537,15 @@ def carry_state(rom):
     while time.time() < deadline:
         for path in state_files(rom):
             if path not in before or os.stat(path).st_mtime > before[path]:
+                # Written down, because whether this file is somebody's game
+                # or a scrap to throw away is not known until the new run has
+                # had its chance to read it.
+                try:
+                    with open(STATE_MANIFEST, "w") as fh:
+                        json.dump({"rom": rom, "files": saved,
+                                   "carried": path}, fh)
+                except OSError:
+                    pass
                 return state_slot_of(path)
         time.sleep(0.1)
     log_line("asked for a save state and none appeared")
@@ -544,7 +562,7 @@ def state_slot_of(path):
         return 0
 
 
-def restore_carried():
+def restore_carried(rescue=False):
     """Put back save states borrowed to carry a game across a restart.
 
     Also run at startup, because the borrowing happens with the emulator
@@ -556,6 +574,20 @@ def restore_carried():
             note = json.load(fh)
     except (OSError, ValueError):
         return
+    # Before anything is put back over it: if the new run never read this,
+    # it is not a scrap, it is the only copy of where somebody was. An
+    # ordinary launch of this game loads the automatic state, so that is
+    # where it goes -- starting the game again finds them where they were.
+    carried = note.get("carried")
+    if rescue and carried and os.path.exists(carried):
+        auto = carried.rsplit(".state", 1)[0] + ".state.auto"
+        try:
+            shutil.copy2(carried, auto)
+            log_line("the game never came back; kept it as %s"
+                     % os.path.basename(auto))
+        except OSError as exc:
+            log_line("could not keep the carried game: %s" % exc)
+
     for item in note.get("files", []):
         try:
             shutil.copy2(item["backup"], item["original"])
@@ -577,12 +609,18 @@ def restore_carried():
 
 
 def log_line(message):
-    """A line in the launch log, which is where anything gone wrong is looked
-    for already."""
+    """A line in this program's own log.
+
+    Not the launch log: RetroArch is streaming its stdout into that one at its
+    own file offset, so anything appended to the end of it gets overwritten by
+    the emulator's next line and the note about what went wrong disappears --
+    which is exactly how a failed state load came to leave no trace at all.
+    """
     try:
-        os.makedirs(os.path.dirname(LAUNCH_LOG), exist_ok=True)
-        with open(LAUNCH_LOG, "a") as fh:
-            fh.write("ra_players: %s\n" % message)
+        os.makedirs(os.path.dirname(PICKER_LOG), exist_ok=True)
+        with open(PICKER_LOG, "a") as fh:
+            fh.write("%s  %s\n"
+                     % (time.strftime("%Y-%m-%d %H:%M:%S"), message))
     except OSError:
         pass
 
@@ -810,7 +848,9 @@ def run_retroarch(args, override=None, shader=None, repick=None,
             child = subprocess.Popen(cmd, stdout=log,
                                      stderr=subprocess.STDOUT)
             if load_slot is not None:
-                threading.Thread(target=resume_carried, args=(load_slot,),
+                label = now_playing(args)[0] or ""
+                threading.Thread(target=resume_carried,
+                                 args=(load_slot, label),
                                  daemon=True).start()
             code = child.wait()
     except OSError as exc:
@@ -830,15 +870,22 @@ def run_retroarch(args, override=None, shader=None, repick=None,
     return 0
 
 
-def resume_carried(slot):
+def resume_carried(slot, name=""):
     """Hand the game back what it was doing, then give everyone their saves.
 
-    The restore is unconditional: if the load never happened, the borrowed
-    slots still belong to whoever made them, and leaving an automatic save
-    sitting in one of them is the exact thing this is all built to avoid.
+    The saves go back whatever happens: they belong to whoever made them, and
+    leaving an automatic save sitting in one of their slots is the exact thing
+    this is all built to avoid.
+
+    What is not unconditional any more is throwing away the carried game. A
+    relaunched game that never answers is not hypothetical -- one core here
+    runs perfectly and services no command at all -- and this used to wait a
+    silent minute and then delete the only copy of where somebody was.
     """
+    reached = False
     try:
-        if wait_ready(time.time() + 60):
+        reached = wait_ready(time.time() + RESUME_WAIT)
+        if reached:
             # Answering is not the same as being ready to accept a state; the
             # core is still bringing itself up in the first frames.
             time.sleep(1.0)
@@ -846,9 +893,13 @@ def resume_carried(slot):
                 log_line("could not ask for the carried state back")
             time.sleep(1.5)
         else:
-            log_line("game never answered, so the carried state was dropped")
+            log_line("%s did not answer in %ds; keeping the carried game"
+                     % (name or "the game", RESUME_WAIT))
+            notify("Could not put the game back",
+                   "%s did not answer. Your place was kept -- start it again "
+                   "from the menu." % (name or "The game"))
     finally:
-        restore_carried()
+        restore_carried(rescue=not reached)
 
 
 def assign_colors(pads):
