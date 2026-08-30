@@ -55,25 +55,25 @@ try:
 
     print("the pads present at the start are watched")
     pads, gone = rp.hold_pads([])
-    names = [d.name for d, _ in pads]
+    names = [d.name for d, _s, _x in pads]
     check("Holdtest Pad One" in names, "the one that was there is picked up")
     check(not gone, "and nothing has left yet")
-    watched = {d.path for d, _ in pads}
-    check(all(s for _, s in pads), "each has a Start to watch for")
+    watched = {d.path for d, _s, _x in pads}
+    check(all(s for _d, s, _x in pads), "each has a Start to watch for")
 
     print("a pad that turns up later is picked up on the next look")
     second = UInput(CAPS, name="Holdtest Pad Two", vendor=0x1234, product=0x5679)
     time.sleep(0.4)
     pads2, gone = rp.hold_pads(pads)
-    names2 = [d.name for d, _ in pads2]
+    names2 = [d.name for d, _s, _x in pads2]
     check("Holdtest Pad Two" in names2,
           "the late arrival is now watched: %s" % names2)
     check("Holdtest Pad One" in names2, "and the first one is still there")
     check(not gone, "nothing reported as leaving")
 
     print("and the handle already being read is kept, not reopened")
-    before = {d.path: id(d) for d, _ in pads}
-    kept = [id(d) for d, _ in pads2 if d.path in before]
+    before = {d.path: id(d) for d, _s, _x in pads}
+    kept = [id(d) for d, _s, _x in pads2 if d.path in before]
     check(any(i in before.values() for i in kept),
           "the original device object survives the rescan")
 
@@ -82,7 +82,7 @@ try:
     time.sleep(0.5)
     pads3, gone = rp.hold_pads(pads2)
     check(gone, "the rescan says something left")
-    check("Holdtest Pad Two" not in [d.name for d, _ in pads3],
+    check("Holdtest Pad Two" not in [d.name for d, _s, _x in pads3],
           "and it is no longer watched")
     print("and the picker's own rescan does the same")
     # What the button tester leans on: it is the screen somebody opens because

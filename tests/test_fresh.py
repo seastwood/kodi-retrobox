@@ -62,8 +62,9 @@ check("savestate_auto" not in text,
 
 print("--fresh is consumed here and never reaches RetroArch")
 seen = {}
-rp.run_retroarch = lambda args, override=None, shader=None: seen.update(
-    args=args, override=override, shader=shader) or 0
+rp.run_retroarch = lambda args, override=None, shader=None, repick=None, \
+    load_slot=None: seen.update(
+        args=args, override=override, shader=shader) or 0
 rp.input_devices = lambda: []          # no pads: the picker stands down
 rp.guard_config = lambda: None
 rp.restore_stale_state = lambda: None

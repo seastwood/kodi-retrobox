@@ -67,12 +67,12 @@ class Bar:
         self.window = None
         self.renderer = None
 
-    def draw(self, fraction):
+    def draw(self, fraction, caption="HOLD TO EXIT"):
         self.open()
         surface = pygame.Surface((self.width, HEIGHT))
         surface.fill(BG)
         pygame.draw.rect(surface, EDGE, (0, 0, self.width, 4))
-        label = self.font.render("HOLD TO EXIT", True, TEXT)
+        label = self.font.render(caption, True, TEXT)
         surface.blit(label, ((self.width - label.get_width()) // 2, 24))
         bw = min(700, self.width // 2)
         bx, by, bh = (self.width - bw) // 2, 64, 22
@@ -96,8 +96,13 @@ def main():
             if line == "hide":
                 bar.close()
                 continue
+            # "0.42 CHANGE PLAYERS" -- the same bar says what this particular
+            # hold is going to do, because there is more than one of them now
+            # and a bar promising to exit while it changes players is a lie.
+            head, _, caption = line.partition(" ")
             try:
-                bar.draw(max(0.0, min(1.0, float(line))))
+                bar.draw(max(0.0, min(1.0, float(head))),
+                         caption.strip() or "HOLD TO EXIT")
             except ValueError:
                 pass
     except (KeyboardInterrupt, OSError):

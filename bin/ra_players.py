@@ -14,6 +14,7 @@ input_playerN_joypad_index.
 """
 
 import glob
+import shutil
 import socket
 import json
 import os
@@ -54,6 +55,18 @@ HOLD_SECONDS = 2.0               # what RetroArch itself waits for
 HOLD_GRACE = 0.45                # Start is an ordinary in-game button: draw
                                  # nothing until the hold is clearly deliberate
 HOLD_RESCAN_SECONDS = 3.0        # how often to look for a pad that turned up
+REPICK_SECONDS = 2.0             # hold Select this long to change players
+REPICK = 90                      # run_retroarch: "the players are changing"
+# Somebody in a browser asking for the same thing. Written by fourth-player,
+# which already writes the guest names into this directory, and read here --
+# the two programs share files, never code.
+REPICK_FLAG = os.path.expanduser("~/.local/state/fourth-player/repick")
+STATE_DIR = os.path.expanduser("~/.config/retroarch/states")
+# Where a game's own save states are put while one is borrowed to carry the
+# game across a restart, and the note saying what to put back if this process
+# dies before it can.
+STATE_BACKUP = os.path.expanduser("~/.local/state/retroarch/carried")
+STATE_MANIFEST = os.path.expanduser("~/.local/state/retroarch/carried.json")
                                  # after the game started -- see watch_hold_to_exit
 RA_CFG = os.path.expanduser("~/.config/retroarch/retroarch.cfg")
 PIXEL_FONT = os.path.expanduser("~/.local/share/fonts/PressStart2P.ttf")
@@ -373,8 +386,8 @@ class HoldBar:
         except (OSError, ValueError):
             self.proc = None
 
-    def show(self, fraction):
-        self._write("%.4f" % fraction)
+    def show(self, fraction, caption=""):
+        self._write("%.4f %s" % (fraction, caption))
 
     def hide(self):
         self._write("hide")
@@ -415,14 +428,196 @@ def send_quit():
     the bar watches every pad and the combo does not. Quitting from here makes
     the bar mean what it shows, whichever pad is holding it.
     """
+    return send_command("QUIT")
+
+
+def send_command(word, reply=False):
+    """Send one word to RetroArch's command port, optionally waiting on it."""
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.settimeout(1)
-        sock.sendto(b"QUIT", ("127.0.0.1", netcmd_port()))
+        sock.sendto(word.encode(), ("127.0.0.1", netcmd_port()))
+        if reply:
+            try:
+                answer, _ = sock.recvfrom(4096)
+            except OSError:
+                answer = b""
+            sock.close()
+            return answer
         sock.close()
         return True
     except OSError:
+        return b"" if reply else False
+
+
+def wait_ready(deadline):
+    """Block until RetroArch answers, so a command is not shouted at nothing.
+
+    A state loaded before the core has finished starting is a state that
+    silently does not load, and the game carries on from its title screen with
+    the player wondering where their game went.
+    """
+    while time.time() < deadline:
+        if b"GET_STATUS" in send_command("GET_STATUS", reply=True):
+            return True
+        time.sleep(0.25)
+    return False
+
+
+def state_files(rom):
+    """Every numbered save state belonging to a game, whichever core wrote it.
+
+    The auto state is left out on purpose: RetroArch rewrites that one itself
+    when a game closes, which is what it is for.
+    """
+    stem = os.path.splitext(os.path.basename(rom))[0]
+    pattern = os.path.join(STATE_DIR, "*", glob.escape(stem) + ".state*")
+    return sorted(f for f in glob.glob(pattern) if not f.endswith(".auto"))
+
+
+def carry_state(rom):
+    """Write the running game to a save state, without endangering anyone's.
+
+    Changing players means restarting the emulator, and the only way to bring
+    the game along is to ask RetroArch to save -- which it can only do into a
+    numbered slot, and the slot it will choose is whichever one the person
+    playing was last using. That is somebody's save, possibly hours of it.
+
+    So every one of them is copied out of the way first, and put back the
+    moment the new run has read what it needed. The window in which any file on
+    disk differs from what the player left there is the couple of seconds when
+    no emulator is running at all, and a note on disk means even being killed
+    inside that window is recoverable: the next start puts them back.
+
+    Returns the slot to load from, or None if nothing was written.
+    """
+    before = {f: os.stat(f).st_mtime for f in state_files(rom)}
+    saved = []
+    try:
+        os.makedirs(STATE_BACKUP, exist_ok=True)
+        for i, path in enumerate(before):
+            backup = os.path.join(STATE_BACKUP, "%d.state" % i)
+            shutil.copy2(path, backup)
+            saved.append({"original": path, "backup": backup})
+    except OSError as exc:
+        log_line("could not put the save states out of harm's way: %s" % exc)
+        return None
+    # Written before the save is asked for, not after: the point of the note is
+    # to survive the thing that happens in between.
+    try:
+        with open(STATE_MANIFEST, "w") as fh:
+            json.dump({"rom": rom, "files": saved}, fh)
+    except OSError as exc:
+        log_line("could not write the note about carried saves: %s" % exc)
+        return None
+
+    if not send_command("SAVE_STATE"):
+        restore_carried()
+        return None
+    # Which slot it chose is not something RetroArch will tell us, so it is
+    # found the only way available: by looking for the file that moved.
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        for path in state_files(rom):
+            if path not in before or os.stat(path).st_mtime > before[path]:
+                return state_slot_of(path)
+        time.sleep(0.1)
+    log_line("asked for a save state and none appeared")
+    restore_carried()
+    return None
+
+
+def state_slot_of(path):
+    """The slot number a state file belongs to. Slot 0 has no suffix."""
+    tail = path.rsplit(".state", 1)[-1]
+    try:
+        return int(tail)
+    except ValueError:
+        return 0
+
+
+def restore_carried():
+    """Put back save states borrowed to carry a game across a restart.
+
+    Also run at startup, because the borrowing happens with the emulator
+    between lives: a power cut or a pkill in that gap would otherwise leave one
+    slot holding an automatic save nobody asked for.
+    """
+    try:
+        with open(STATE_MANIFEST) as fh:
+            note = json.load(fh)
+    except (OSError, ValueError):
+        return
+    for item in note.get("files", []):
+        try:
+            shutil.copy2(item["backup"], item["original"])
+            os.unlink(item["backup"])
+        except (OSError, KeyError, TypeError):
+            pass
+    # Anything the save wrote that was not there before is ours, and litter.
+    kept = {item.get("original") for item in note.get("files", [])}
+    for path in state_files(note.get("rom", "")):
+        if path not in kept:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+    try:
+        os.unlink(STATE_MANIFEST)
+    except OSError:
+        pass
+
+
+def log_line(message):
+    """A line in the launch log, which is where anything gone wrong is looked
+    for already."""
+    try:
+        os.makedirs(os.path.dirname(LAUNCH_LOG), exist_ok=True)
+        with open(LAUNCH_LOG, "a") as fh:
+            fh.write("ra_players: %s\n" % message)
+    except OSError:
+        pass
+
+
+def repick_asked():
+    """Has anything outside asked for the player picker to come back?"""
+    try:
+        os.unlink(REPICK_FLAG)
+        return True
+    except OSError:
         return False
+
+
+class Repick(threading.Event):
+    """A request to put the player picker back over a game already running.
+
+    Carries the two things the next pass needs and cannot work out for itself:
+    which save slot the game was parked in, and the config the last run was
+    using -- so backing out of the picker puts everybody back exactly where
+    they were rather than dropping them into the menu.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.slot = None
+        self.override = None
+
+
+def start_repick(repick, rom):
+    """Put the game somewhere safe, then close it so the picker can come back.
+
+    The order matters: the state has to be written while the emulator is still
+    alive to write it, and the flag has to be set before the quit, or the exit
+    reads as an ordinary "they finished playing" and nothing comes back.
+    """
+    slot = carry_state(rom)
+    repick.slot = slot
+    repick.set()
+    if not send_quit():
+        # Nothing is going to close, so nothing is going to reopen. Put the
+        # borrowed saves back rather than leaving them borrowed for ever.
+        repick.clear()
+        restore_carried()
 
 
 def hold_pads(existing):
@@ -437,7 +632,7 @@ def hold_pads(existing):
     Handles already being read are kept rather than reopened, because reopening
     one loses whatever it had buffered.
     """
-    held = {dev.path: (dev, starts) for dev, starts in existing}
+    held = {dev.path: entry for entry in existing for dev, _s, _x in [entry]}
     keep, seen = [], set()
     for kind, _index, path, dev in input_devices():
         seen.add(path)
@@ -445,12 +640,14 @@ def hold_pads(existing):
             dev.close()                   # keep the handle already in use
             keep.append(held[path])
             continue
-        starts = set()
+        starts, selects = set(), set()
         if kind == "pad":
             btn, _labels = pad_controls(dev)
             starts = {code for code, action in btn.items() if action == "start"}
-        if starts:
-            keep.append((dev, starts))
+            selects = {code for code, action in btn.items()
+                       if action == "select"}
+        if starts or selects:
+            keep.append((dev, starts, selects))
         else:
             dev.close()
     gone = False
@@ -464,7 +661,7 @@ def hold_pads(existing):
     return keep, gone
 
 
-def watch_hold_to_exit(stop, bar=None):
+def watch_hold_to_exit(stop, bar=None, repick=None, rom=""):
     """Narrate the hold-to-exit while a game is running.
 
     RetroArch does not grab the pads exclusively, so this reads them alongside
@@ -475,61 +672,91 @@ def watch_hold_to_exit(stop, bar=None):
     pads, _ = hold_pads([])
     if bar is None:
         bar = HoldBar()
-    held_since = None
+    # Two holds, watched the same way: Start closes the game, Select brings the
+    # player picker back over it. Both are ordinary in-game buttons, so both
+    # wait out HOLD_GRACE before they admit to being a hold at all.
+    holds = {"start": {"since": None, "done": False,
+                       "caption": "HOLD TO EXIT"},
+             "select": {"since": None, "done": False,
+                        "caption": "HOLD TO CHANGE PLAYERS"}}
     showing = False
-    quit_sent = False
     next_scan = time.time() + HOLD_RESCAN_SECONDS
+    next_flag = time.time()
     try:
         while not stop.is_set():
             if time.time() >= next_scan:
                 next_scan = time.time() + HOLD_RESCAN_SECONDS
                 pads, gone = hold_pads(pads)
-                if gone and held_since is not None:
+                if gone and any(h["since"] for h in holds.values()):
                     # The pad being held may be the one that left, and its
                     # release will never arrive.
                     if showing:
                         bar.hide()
                         showing = False
-                    held_since, quit_sent = None, False
-            for dev, starts in pads:
+                    for h in holds.values():
+                        h["since"], h["done"] = None, False
+            # Somebody asking from a browser, which is the same request without
+            # a controller to make it on.
+            if repick is not None and time.time() >= next_flag:
+                next_flag = time.time() + 0.4
+                if repick_asked() and not repick.is_set():
+                    start_repick(repick, rom)
+            for dev, starts, selects in pads:
                 try:
                     event = dev.read_one()
                 except OSError:
                     event = None
                 while event is not None:
-                    if (event.type == evdev.ecodes.EV_KEY
-                            and event.code in starts):
+                    which = None
+                    if event.type == evdev.ecodes.EV_KEY:
+                        if event.code in starts:
+                            which = "start"
+                        elif event.code in selects and repick is not None:
+                            which = "select"
+                    if which is not None:
                         if event.value == 1:
-                            held_since, = (time.time(),)
+                            holds[which]["since"] = time.time()
                         elif event.value == 0:
                             if showing:
                                 bar.hide()
                                 showing = False
-                            held_since = None
-                            quit_sent = False
+                            holds[which]["since"] = None
+                            holds[which]["done"] = False
                     try:
                         event = dev.read_one()
                     except OSError:
                         event = None
-            if held_since is not None:
-                fraction = hold_fraction(time.time() - held_since)
-                if fraction is not None:
-                    bar.show(fraction)
-                    showing = True
-                    if fraction >= 1.0 and not quit_sent:
-                        quit_sent = send_quit()
+            for name, hold in holds.items():
+                if hold["since"] is None:
+                    continue
+                fraction = hold_fraction(time.time() - hold["since"])
+                if fraction is None:
+                    continue
+                bar.show(fraction, hold["caption"])
+                showing = True
+                if fraction < 1.0 or hold["done"]:
+                    continue
+                if name == "start":
+                    hold["done"] = send_quit()
+                elif not repick.is_set():
+                    hold["done"] = True
+                    bar.hide()
+                    showing = False
+                    start_repick(repick, rom)
+                break
             stop.wait(0.03)
     finally:
         bar.hide()
         bar.close()
-        for dev, _starts in pads:
+        for dev, _starts, _selects in pads:
             try:
                 dev.close()
             except OSError:
                 pass
 
 
-def run_retroarch(args, override=None, shader=None):
+def run_retroarch(args, override=None, shader=None, repick=None,
+                  load_slot=None):
     """Start the game and stay alive long enough to see whether it worked.
 
     This used to be an os.execv. Nothing then watched the launch, and the Kodi
@@ -560,24 +787,54 @@ def run_retroarch(args, override=None, shader=None):
         except (ValueError, OSError):
             pass
     stop = threading.Event()
-    watcher = threading.Thread(target=watch_hold_to_exit, args=(stop,),
-                               daemon=True)
+    rom = args[-1] if args and not args[-1].startswith("-") else ""
+    watcher = threading.Thread(target=watch_hold_to_exit,
+                               args=(stop, None, repick, rom), daemon=True)
     watcher.start()
     try:
         with open(LAUNCH_LOG, "w") as log:
-            code = subprocess.Popen(cmd, stdout=log,
-                                    stderr=subprocess.STDOUT).wait()
+            child = subprocess.Popen(cmd, stdout=log,
+                                     stderr=subprocess.STDOUT)
+            if load_slot is not None:
+                threading.Thread(target=resume_carried, args=(load_slot,),
+                                 daemon=True).start()
+            code = child.wait()
     except OSError as exc:
         notify("Could not start the game", str(exc))
         return 1
     finally:
         stop.set()
         restore_screen(saver)
+    if repick is not None and repick.is_set():
+        # Closed on purpose, to put the picker back over the same game. Not a
+        # failure however RetroArch chose to exit.
+        return REPICK
     reason = diagnose(LAUNCH_LOG, code, time.time() - started)
     if reason:
         notify("Could not start the game", reason)
         return 1
     return 0
+
+
+def resume_carried(slot):
+    """Hand the game back what it was doing, then give everyone their saves.
+
+    The restore is unconditional: if the load never happened, the borrowed
+    slots still belong to whoever made them, and leaving an automatic save
+    sitting in one of them is the exact thing this is all built to avoid.
+    """
+    try:
+        if wait_ready(time.time() + 60):
+            # Answering is not the same as being ready to accept a state; the
+            # core is still bringing itself up in the first frames.
+            time.sleep(1.0)
+            if not send_command("LOAD_STATE"):
+                log_line("could not ask for the carried state back")
+            time.sleep(1.5)
+        else:
+            log_line("game never answered, so the carried state was dropped")
+    finally:
+        restore_carried()
 
 
 def assign_colors(pads):
@@ -1517,6 +1774,14 @@ def draw(screen, fonts, pads, message, slots, playing=None):
     foot = fonts["small"].render(message, True, MAGENTA)
     screen.blit(foot, ((w - foot.get_width()) // 2, int(h * 0.88)))
 
+    # Said here because there is nowhere else to say it: once the game starts
+    # this screen is gone, and somebody arriving halfway through a game has no
+    # way to guess that it can be brought back at all.
+    tip = fonts["tiny"].render(
+        "IN A GAME: HOLD SELECT TO COME BACK HERE  ·  HOLD START TO QUIT",
+        True, DIM)
+    screen.blit(tip, ((w - tip.get_width()) // 2, int(h * 0.93)))
+
 
 # Starting a game the way the cartridge did: from its own title screen.
 #
@@ -1540,7 +1805,7 @@ def fresh_override():
     return path
 
 
-def write_override(pads, slots, fresh=False):
+def write_override(pads, slots, fresh=False, slot=None):
     """Write a RetroArch config fragment binding claimed devices to ports."""
     claimed = [p for p in pads if p.slot is not None]
     kbd_slot = next((p.slot for p in claimed if p.kind == "kbd"), None)
@@ -1587,6 +1852,12 @@ def write_override(pads, slots, fresh=False):
             # Last, so it beats anything above it, though nothing above it
             # touches save states today.
             fh.write(FRESH_LINES)
+        if slot is not None:
+            # A game being carried across a change of players. The slot has to
+            # match the one it was written to a moment ago, or LOAD_STATE will
+            # confidently load somebody else's save instead.
+            fh.write('state_slot = "%d"\n' % slot)
+            fh.write('savestate_auto_load = "false"\n')
     return path
 
 
@@ -1654,14 +1925,39 @@ def main():
 
     guard_config()
     restore_stale_state()
+    # A run killed while it had somebody's save state borrowed never got to put
+    # it back. Do that before anything reads one.
+    restore_carried()
+
+    repick = Repick()
+    asked = False
+    while True:
+        code = play_once(args, cap, shader, fresh, asked, repick)
+        if code != REPICK:
+            return code
+        # From here on the picker comes up whatever the pads say: being asked
+        # for is the whole reason it is coming back. `fresh` is left alone --
+        # it means "do not touch the automatic save", which is still true --
+        # and the game resumes from the slot it was parked in instead.
+        asked = True
+
+
+def play_once(args, cap, shader, fresh, asked, repick):
+    """Pick the players if they need picking, then play until it is over."""
+    load_slot = repick.slot if repick.is_set() else None
+    previous = repick.override
+    repick.clear()
+    repick.slot = None
 
     pads_raw = input_devices()
     joypads = [d for d in pads_raw if d[0] == "pad"]
-    if not needs_picker(len(joypads), cap):
+    if not asked and not needs_picker(len(joypads), cap):
         for _kind, _index, _path, dev in pads_raw:
             dev.close()
-        return run_retroarch(args, fresh_override() if fresh else None,
-                             shader=shader)
+        override = fresh_override() if fresh else None
+        repick.override = override
+        return run_retroarch(args, override, shader=shader, repick=repick,
+                             load_slot=load_slot)
 
     slots = player_slots(pads_raw, cap)
     pads = [Pad(index, path, dev, kind, cursor=i % slots)
@@ -1807,15 +2103,25 @@ def main():
         pygame.display.flip()
         clock.tick(60)
 
-    override = write_override(pads, slots, fresh) if launch else None
+    override = write_override(pads, slots, fresh, slot=load_slot) \
+        if launch else None
     for p in pads:
         p.close()
     pygame.quit()
 
     if cancelled:
-        return 1
+        if load_slot is None:
+            return 1
+        # Backing out of a picker that was asked for mid-game means "leave it
+        # as it was", not "stop playing" -- so the game comes back on the same
+        # config, with the same people on the same ports.
+        repick.override = previous
+        return run_retroarch(args, previous, shader, repick=repick,
+                             load_slot=load_slot)
 
-    return run_retroarch(args, override, shader)
+    repick.override = override
+    return run_retroarch(args, override, shader, repick=repick,
+                         load_slot=load_slot)
 
 
 if __name__ == "__main__":

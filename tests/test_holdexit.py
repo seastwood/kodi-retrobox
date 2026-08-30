@@ -43,8 +43,12 @@ check(all(b > a for a, b in zip(steps, steps[1:])), "it only ever grows")
 class FakeBar:
     def __init__(self):
         self.calls = []
-    def show(self, fraction):
+        self.captions = []
+    def show(self, fraction, caption=""):
+        # The caption is recorded too: there are two holds now, and a bar that
+        # promises to exit while it is changing players would be a lie.
         self.calls.append(round(fraction, 2))
+        self.captions.append(caption)
     def hide(self):
         self.calls.append("hide")
     def close(self):
