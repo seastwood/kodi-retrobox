@@ -108,16 +108,17 @@ for label, argv in (
     if seen.get("override"):
         os.unlink(seen["override"])
 
-print("and the two holds are not the same length")
-check(rp.REPICK_SECONDS > rp.HOLD_SECONDS,
-      "asking for the picker is the longer hold: %s vs %s"
-      % (rp.REPICK_SECONDS, rp.HOLD_SECONDS))
-check(rp.hold_fraction(2.0, rp.REPICK_SECONDS) < 1.0,
-      "two seconds of Select is not yet a request")
-check(rp.hold_fraction(5.0, rp.REPICK_SECONDS) >= 1.0,
-      "five is")
-check(rp.hold_fraction(2.0) >= 1.0,
-      "while Start still quits in two, as it always did")
+# The two holds are separately configurable but deliberately the same, so
+# neither one is the odd gesture that has to be learned differently.
+print("both holds take the same two seconds")
+check(rp.hold_fraction(rp.REPICK_SECONDS, rp.REPICK_SECONDS) >= 1.0,
+      "a full Select hold asks for the picker")
+check(rp.hold_fraction(rp.REPICK_SECONDS / 2, rp.REPICK_SECONDS) < 1.0,
+      "half of one does not")
+check(rp.hold_fraction(rp.HOLD_SECONDS) >= 1.0,
+      "and Start still quits in its own two seconds")
+check(rp.hold_fraction(0.1, rp.REPICK_SECONDS) is None,
+      "a tap is not a hold at all, whichever button it is")
 
 print(("FAILED: %d" % len(fails)) if fails else "test_fresh: all ok")
 sys.exit(1 if fails else 0)

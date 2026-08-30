@@ -55,7 +55,7 @@ HOLD_SECONDS = 2.0               # what RetroArch itself waits for
 HOLD_GRACE = 0.45                # Start is an ordinary in-game button: draw
                                  # nothing until the hold is clearly deliberate
 HOLD_RESCAN_SECONDS = 3.0        # how often to look for a pad that turned up
-REPICK_SECONDS = 5.0             # hold Select this long to change players
+REPICK_SECONDS = 2.0             # hold Select this long to change players
 
 # RetroArch opens its own menu on a held Select (combo 8), which is the same
 # gesture as asking for the player picker and, worse, a way into the whole
