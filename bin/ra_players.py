@@ -457,35 +457,54 @@ def send_quit():
     return send_command("QUIT")
 
 
-def send_command(word, reply=False):
-    """Send one word to RetroArch's command port, optionally waiting on it."""
+def send_command(word):
+    """Tell RetroArch one thing, and never ask it anything.
+
+    Deliberately write-only. There was a version of this that could wait for a
+    reply, used to find out whether a game was ready yet -- and asking that
+    question every quarter of a second from the moment the process started
+    segfaulted the emulator within seconds. Readiness is read out of the
+    game's own log now (wait_for_log), and there is no way to ask from here.
+    """
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.settimeout(1)
         sock.sendto(word.encode(), ("127.0.0.1", netcmd_port()))
-        if reply:
-            try:
-                answer, _ = sock.recvfrom(4096)
-            except OSError:
-                answer = b""
-            sock.close()
-            return answer
         sock.close()
         return True
     except OSError:
-        return b"" if reply else False
+        return False
 
 
-def wait_ready(deadline):
-    """Block until RetroArch answers, so a command is not shouted at nothing.
+# What RetroArch writes once its command interface is listening, and what it
+# writes when it has taken a state back. Read rather than asked for: see
+# wait_for_log.
+UP_MARKER = "bringing_up_command_interface"
+LOADED_MARKER = "[State] Loading state"
 
-    A state loaded before the core has finished starting is a state that
-    silently does not load, and the game carries on from its title screen with
-    the player wondering where their game went.
+
+def wait_for_log(marker, deadline, stop=None):
+    """Wait for the game to say something, rather than asking it anything.
+
+    Asking was the obvious way and it was badly wrong. Polling GET_STATUS from
+    the instant the process started segfaulted RetroArch within seconds --
+    measured on this machine, three clean thirty-second runs of the same game
+    with no polling against two crashes out of two with it. The probe meant to
+    find out whether the game was ready was killing the game.
+
+    Its own log costs it nothing: this process already has the emulator's
+    stdout in a file, so waiting on that touches the game not at all. Nothing
+    is now sent to a game that has not first said it is listening.
     """
     while time.time() < deadline:
-        if b"GET_STATUS" in send_command("GET_STATUS", reply=True):
-            return True
+        if stop is not None and stop.is_set():
+            return False              # it is gone; waiting is waiting for nothing
+        try:
+            with open(LAUNCH_LOG, encoding="utf-8", errors="replace") as fh:
+                if marker in fh.read():
+                    return True
+        except OSError:
+            pass
         time.sleep(0.25)
     return False
 
@@ -498,7 +517,16 @@ def state_files(rom):
     """
     stem = os.path.splitext(os.path.basename(rom))[0]
     pattern = os.path.join(STATE_DIR, "*", glob.escape(stem) + ".state*")
-    return sorted(f for f in glob.glob(pattern) if not f.endswith(".auto"))
+    out = []
+    for path in glob.glob(pattern):
+        tail = path.rsplit(".state", 1)[-1]
+        # "" is slot 0 and "3" is slot 3. ".auto" is not a slot, and ".png" is
+        # the thumbnail RetroArch writes beside every state -- which used to
+        # count as a state here, so the scan for "the file that moved" could
+        # find a picture and call it slot 0.
+        if tail == "" or tail.isdigit():
+            out.append(path)
+    return sorted(out)
 
 
 def carry_state(rom):
@@ -592,6 +620,10 @@ def restore_carried(rescue=False):
         auto = carried.rsplit(".state", 1)[0] + ".state.auto"
         try:
             shutil.copy2(carried, auto)
+            # The picture RetroArch writes beside a state, so the menu shows
+            # where they were rather than a blank square.
+            if os.path.exists(carried + ".png"):
+                shutil.copy2(carried + ".png", auto + ".png")
             log_line("the game never came back; kept it as %s"
                      % os.path.basename(auto))
         except OSError as exc:
@@ -606,9 +638,14 @@ def restore_carried(rescue=False):
     # Anything the save wrote that was not there before is ours, and litter.
     kept = {item.get("original") for item in note.get("files", [])}
     for path in state_files(note.get("rom", "")):
-        if path not in kept:
+        if path in kept:
+            continue
+        # The thumbnail goes with the state it belongs to; it is not a state
+        # itself, so state_files does not list it and it would otherwise be
+        # left behind for ever.
+        for junk in (path, path + ".png"):
             try:
-                os.unlink(path)
+                os.unlink(junk)
             except OSError:
                 pass
     try:
@@ -847,6 +884,11 @@ def run_retroarch(args, override=None, shader=None, repick=None,
             signal.signal(sig, _bail)
         except (ValueError, OSError):
             pass
+    # Nothing has asked *this* game to stop. Without clearing it, a game
+    # relaunched seconds after the picker closed the last one inherits that
+    # quit and any crash of its own is written off as somebody else's tidy
+    # shutdown -- which is precisely what happened.
+    QUIT_ASKED[0] = 0.0
     stop = threading.Event()
     rom = args[-1] if args and not args[-1].startswith("-") else ""
     watcher = threading.Thread(target=watch_hold_to_exit,
@@ -856,12 +898,23 @@ def run_retroarch(args, override=None, shader=None, repick=None,
         with open(LAUNCH_LOG, "w") as log:
             child = subprocess.Popen(cmd, stdout=log,
                                      stderr=subprocess.STDOUT)
+            resume = None
+            resume_stop = threading.Event()
             if load_slot is not None:
                 label = now_playing(args)[0] or ""
-                threading.Thread(target=resume_carried,
-                                 args=(load_slot, label),
-                                 daemon=True).start()
+                resume = threading.Thread(
+                    target=resume_carried,
+                    args=(load_slot, label, resume_stop), daemon=True)
+                resume.start()
             code = child.wait()
+            if resume is not None:
+                # This thread is the one that hands the borrowed saves back.
+                # It was a daemon left to run for up to forty-five seconds, so
+                # a game that died four seconds in took the whole process down
+                # with it and the saves stayed borrowed until the next launch
+                # happened to notice.
+                resume_stop.set()
+                resume.join(timeout=20)
     except OSError as exc:
         notify("Could not start the game", str(exc))
         return 1
@@ -884,36 +937,40 @@ def run_retroarch(args, override=None, shader=None, repick=None,
     return 0
 
 
-def resume_carried(slot, name=""):
+def resume_carried(slot, name="", stop=None):
     """Hand the game back what it was doing, then give everyone their saves.
 
     The saves go back whatever happens: they belong to whoever made them, and
     leaving an automatic save sitting in one of their slots is the exact thing
     this is all built to avoid.
 
-    What is not unconditional any more is throwing away the carried game. A
-    relaunched game that never answers is not hypothetical -- one core here
-    runs perfectly and services no command at all -- and this used to wait a
-    silent minute and then delete the only copy of where somebody was.
+    The carried game is only thrown away once the log has confirmed the new
+    run actually read it. Anything else -- a game that never came up, a game
+    that came up and would not take the state, a game that crashed -- keeps
+    it, because it is the only copy of where somebody was.
     """
-    reached = False
+    loaded = False
     try:
-        reached = wait_ready(time.time() + RESUME_WAIT)
-        if reached:
-            # Answering is not the same as being ready to accept a state; the
-            # core is still bringing itself up in the first frames.
-            time.sleep(1.0)
-            if not send_command("LOAD_STATE"):
-                log_line("could not ask for the carried state back")
-            time.sleep(1.5)
-        else:
-            log_line("%s did not answer in %ds; keeping the carried game"
+        if not wait_for_log(UP_MARKER, time.time() + RESUME_WAIT, stop):
+            log_line("%s never came up in %ds; keeping the carried game"
                      % (name or "the game", RESUME_WAIT))
             notify("Could not put the game back",
-                   "%s did not answer. Your place was kept -- start it again "
+                   "%s did not start. Your place was kept -- start it again "
                    "from the menu." % (name or "The game"))
+            return
+        # Listening is not the same as ready for a state: the core is still
+        # bringing itself up in its first frames.
+        time.sleep(2.0)
+        send_command("LOAD_STATE")
+        loaded = wait_for_log(LOADED_MARKER, time.time() + 20, stop)
+        if not loaded:
+            log_line("%s would not take the carried state back" % (name or "the game"))
+            notify("Could not put the game back",
+                   "%s started, but would not take your place back. It was "
+                   "kept -- start it again from the menu."
+                   % (name or "The game"))
     finally:
-        restore_carried(rescue=not reached)
+        restore_carried(rescue=not loaded)
 
 
 def assign_colors(pads):
@@ -2014,9 +2071,11 @@ def main():
 
     guard_config()
     restore_stale_state()
-    # A run killed while it had somebody's save state borrowed never got to put
-    # it back. Do that before anything reads one.
-    restore_carried()
+    # A note here means a previous run was borrowing somebody's save state and
+    # never finished handing it back -- it crashed, or was killed, or the game
+    # it relaunched died before it could read the state. Whichever it was, the
+    # carried game is the only copy of where somebody was, so it is kept.
+    restore_carried(rescue=True)
 
     repick = Repick()
     asked = False
