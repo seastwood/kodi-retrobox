@@ -1045,7 +1045,59 @@ def slot_rows(slots):
     return rows, (slots + rows - 1) // rows
 
 
-def claim(p, pads):
+def other_slots(pads, exclude):
+    """The slots somebody other than this pad has claimed."""
+    return {q.slot for q in pads if q.slot is not None and q is not exclude}
+
+
+def step_cursor(p, pads, slots, step):
+    """Move a cursor, stepping straight over slots already claimed.
+
+    A claimed slot is not a place another controller can go, so it is not a
+    place another controller's cursor should stop. Landing on one and being
+    told "SLOT TAKEN" is a dead end the board could simply not have offered.
+    """
+    if not step:
+        return
+    taken = other_slots(pads, p)
+    # Where it would have landed before any of this: a whole row down from the
+    # bottom row still means the last slot, rather than nothing happening.
+    target = max(0, min(slots - 1, p.cursor + step))
+    if target == p.cursor:
+        return
+    direction = 1 if step > 0 else -1
+    # The slot itself, then onwards in the direction of travel, then back
+    # towards where it came from -- so a claimed slot at the edge of the board
+    # is stepped over rather than becoming a wall.
+    order = [target]
+    order += [target + direction * n for n in range(1, slots)]
+    order += [target - direction * n for n in range(1, slots)]
+    for candidate in order:
+        if 0 <= candidate < slots and candidate not in taken:
+            p.cursor = candidate
+            return
+
+
+def clear_hovering(pads, slot, slots):
+    """Move anybody still pointing at a slot that has just been claimed.
+
+    Without this they sit on somebody else's slot looking like they are about
+    to take it, and the only thing pressing confirm can do is refuse.
+    """
+    taken = {q.slot for q in pads if q.slot is not None}
+    for q in pads:
+        if q.slot is not None or q.cursor != slot:
+            continue
+        # The nearest free slot, preferring the one to the right on a tie, so
+        # two controllers bumped off the same slot do not both land together.
+        for candidate in sorted(range(slots),
+                                key=lambda c: (abs(c - slot), -c)):
+            if candidate not in taken:
+                q.cursor = candidate
+                break
+
+
+def claim(p, pads, slots=None):
     """Take the slot under the cursor. Returns a message if it cannot."""
     if any(q.slot == p.cursor for q in pads):
         return "SLOT TAKEN"
@@ -1055,6 +1107,8 @@ def claim(p, pads):
         # input -- so a second keyboard player would just be the first again.
         return "ONLY ONE KEYBOARD CAN PLAY"
     p.slot = p.cursor
+    if slots:
+        clear_hovering(pads, p.slot, slots)
     return None
 
 
@@ -1069,7 +1123,7 @@ def handle_event(p, event, pads, slots):
             return False, None
         p.seen = True
         if event.code in KBD_CLAIM and p.slot is None:
-            return None, claim(p, pads)
+            return None, claim(p, pads, slots)
         if event.code in KBD_RELEASE:
             if p.slot is not None:
                 p.cursor, p.slot = p.slot, None
@@ -1080,10 +1134,9 @@ def handle_event(p, event, pads, slots):
                 return None, "CLAIM A SLOT BEFORE STARTING"
             return "launch", None
         elif event.code in KBD_MOVE and p.slot is None:
-            p.cursor = max(0, min(slots - 1, p.cursor + KBD_MOVE[event.code]))
+            step_cursor(p, pads, slots, KBD_MOVE[event.code])
         elif event.code in KBD_ROW and p.slot is None:
-            p.cursor = max(0, min(slots - 1,
-                                  p.cursor + KBD_ROW[event.code] * per_row))
+            step_cursor(p, pads, slots, KBD_ROW[event.code] * per_row)
         return None, None
 
     if (event.type == evdev.ecodes.EV_KEY and event.value == 0
@@ -1096,7 +1149,7 @@ def handle_event(p, event, pads, slots):
         p.seen = True
         p.last_press = (p.labels.get(action) or "?", action, event.code)
         if action == "confirm" and p.slot is None:
-            return None, claim(p, pads)
+            return None, claim(p, pads, slots)
         if action == "back":
             p.back_since = time.time()
             if p.slot is not None:
@@ -1124,7 +1177,7 @@ def handle_event(p, event, pads, slots):
             # pads could not move the cursor at all before.
             step = {"left": -1, "right": 1}.get(action, 0)
             step += {"up": -1, "down": 1}.get(action, 0) * per_row
-            p.cursor = max(0, min(slots - 1, p.cursor + step))
+            step_cursor(p, pads, slots, step)
     elif event.type == evdev.ecodes.EV_ABS:
         move = row = 0
         if event.code == evdev.ecodes.ABS_HAT0X:
@@ -1143,7 +1196,7 @@ def handle_event(p, event, pads, slots):
                 row = 1
         step = move + row * per_row
         if step and p.axis_latch != (move or row) and p.slot is None:
-            p.cursor = max(0, min(slots - 1, p.cursor + step))
+            step_cursor(p, pads, slots, step)
         if event.code in (evdev.ecodes.ABS_HAT0X, evdev.ecodes.ABS_X,
                           evdev.ecodes.ABS_HAT0Y, evdev.ecodes.ABS_Y):
             p.axis_latch = move or row
