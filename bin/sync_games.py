@@ -105,6 +105,22 @@ def ensure_core(core):
             pass
 
 
+# Folders that hold things a system needs but nobody plays. A Dreamcast BIOS
+# dropped into the Dreamcast games folder is the obvious case, and it happened:
+# six archives appeared on the television and in the guests' game list, between
+# Crazy Taxi and Worms Armageddon, as though they were games. Firmware has to
+# live somewhere and next to the games it belongs to is a reasonable place to
+# put it, so the scan is what should know better.
+NOT_GAMES = ("bios", "firmware")
+
+
+def not_a_game_folder(dirpath):
+    """Whether a directory is holding support files rather than games."""
+    return any(part.lower() in NOT_GAMES or
+               any(word in part.lower() for word in NOT_GAMES)
+               for part in dirpath.split(os.sep))
+
+
 # The data half of a disc image, as opposed to the file you actually launch.
 TRACK_EXTS = {"bin", "iso", "img"}
 # Files that stand for a whole disc, most specific first.
@@ -303,6 +319,8 @@ def fill_gaps():
         raw_ok = uses_raw_tracks(items) or not items
         fresh = []
         for dirpath, _dirs, files in os.walk(os.path.join(ROMS, folder)):
+            if not_a_game_folder(dirpath):
+                continue
             for stem, path in launchable(dirpath, files, exts, raw_ok):
                 if path in have_paths or stem in have_labels:
                     continue
