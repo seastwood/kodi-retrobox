@@ -265,6 +265,36 @@ def launchable(dirpath, files, exts, raw_ok=True):
     hold no .cue so their .bin is the game.
     """
     present = set(f.rsplit(".", 1)[-1].lower() for f in files if "." in f)
+    # Which discs the .m3u files here actually stand for. This used to be the
+    # blunt question "is there an m3u in this directory at all", which is right
+    # when a game has a folder to itself and badly wrong when a whole system
+    # shares one: a single two-disc game put an .m3u in the GameCube folder,
+    # and from then on every other game in that folder was treated as a disc it
+    # covered, so nothing new could ever be added again.
+    spoken_for, m3u_stems = set(), set()
+    for name in files:
+        if name.rsplit(".", 1)[-1].lower() != "m3u":
+            continue
+        m3u_stems.add(name.rsplit(".", 1)[0])
+        try:
+            with open(os.path.join(dirpath, name)) as fh:
+                for line in fh:
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        spoken_for.add(os.path.basename(line))
+        except OSError:
+            pass
+    # An m3u also speaks for any disc that shares its name, whether or not it
+    # lists it. One written by hand may hold relative paths, or nothing at all,
+    # and a set whose discs turned into entries of their own is the mess this
+    # rule exists to prevent. Matching on the name keeps that while leaving
+    # unrelated games in the same folder alone.
+    if m3u_stems:
+        for name in files:
+            stem, _dot, _ext = name.rpartition(".")
+            match = DISC.match(stem)
+            if match and match.group("base") in m3u_stems:
+                spoken_for.add(name)
     out = []
     for name in sorted(files):
         if "." not in name:
@@ -275,10 +305,9 @@ def launchable(dirpath, files, exts, raw_ok=True):
             continue
         if ext in TRACK_EXTS and not raw_ok:
             continue                      # this system's games are not raw dumps
-        if "m3u" in present and "m3u" in exts:
-            if ext != "m3u":
-                continue                  # the m3u covers every disc
-        elif present & CUE_EXTS:
+        if name in spoken_for and "m3u" in exts:
+            continue                      # an m3u here is the entry point
+        if present & CUE_EXTS:
             if ext in TRACK_EXTS:
                 continue                  # the cue is the entry point
         out.append((stem, os.path.join(dirpath, name)))
