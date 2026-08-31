@@ -42,8 +42,13 @@ path = rp.fresh_override()
 text = open(path).read()
 os.unlink(path)
 check('savestate_auto_load = "false"' in text, "the automatic load is off")
-check('savestate_auto_save = "false"' in text,
-      "and so is the automatic save, or the fresh run overwrites the state")
+# And saving is NOT turned off. "Fresh" means do not load what was saved; it
+# used to mean do not save either, and a game started fresh and played for
+# three hours then wrote nothing down when it closed. What keeps a fresh run
+# from overwriting the point somebody stepped past is preserve_auto_state,
+# which copies it aside first -- not silence.
+check("savestate_auto_save" not in text,
+      "saving is left alone, so the session is not lost: %r" % text)
 check("savefile" not in text and "sram" not in text.lower(),
       "nothing touches in-game saving, which is a different thing entirely")
 

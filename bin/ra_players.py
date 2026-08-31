@@ -1980,16 +1980,21 @@ def draw(screen, fonts, pads, message, slots, playing=None):
 
 # Starting a game the way the cartridge did: from its own title screen.
 #
-# Both of these are normally on, so a game picked from the menu resumes exactly
-# where it was last left. That is the right default and it is not always what
-# is wanted -- and auto-save matters as much as auto-load here, because a fresh
-# run that saved on exit would write over the state being preserved.
+# "Fresh" means do not *load* what was saved. It used to mean do not *save*
+# either, and that was a mistake with real teeth: a game started fresh and
+# played for three hours wrote nothing down when it closed. Combined with
+# config_save_on_exit, which RetroArch had on, that one launch also disabled
+# automatic saving for every game afterwards -- so the loss was not even
+# confined to the session that caused it.
+#
+# So a fresh run saves like any other. What it must not do is quietly destroy
+# the resume point somebody deliberately stepped past, which is what saving on
+# exit would otherwise do -- hence preserve_auto_state below.
 #
 # In-game saving is untouched. Battery saves and memory cards are a different
-# mechanism from save states, so a game started this way still saves the way it
-# always did.
-FRESH_LINES = ('savestate_auto_load = "false"\n'
-               'savestate_auto_save = "false"\n')
+# mechanism from save states, so a game started this way still saves the way
+# it always did.
+FRESH_LINES = 'savestate_auto_load = "false"\n'
 
 
 def new_override(prefix):
@@ -2008,6 +2013,35 @@ def new_override(prefix):
         except OSError:
             pass
     return tempfile.mkstemp(prefix=prefix, suffix=".cfg", dir=OVERRIDE_DIR)
+
+
+def rom_of(args):
+    """The content path out of a RetroArch command line, or ""."""
+    return args[-1] if args and not args[-1].startswith("-") else ""
+
+
+def preserve_auto_state(rom):
+    """Keep the resume point a fresh start is about to step past.
+
+    A fresh run still saves when it closes, which is the whole point -- but the
+    file it saves into is the one holding wherever somebody was before they
+    chose to start again. Copying it aside first means choosing "start fresh"
+    costs nothing: the old position is still on disk under .previous, and the
+    new one is written normally.
+    """
+    if not rom:
+        return
+    stem = os.path.splitext(os.path.basename(rom))[0]
+    pattern = os.path.join(STATE_DIR, "*", glob.escape(stem) + ".state.auto")
+    for path in glob.glob(pattern):
+        try:
+            shutil.copy2(path, path + ".previous")
+            if os.path.exists(path + ".png"):
+                shutil.copy2(path + ".png", path + ".previous.png")
+            log_line("kept the old resume point as %s"
+                     % os.path.basename(path + ".previous"))
+        except OSError as exc:
+            log_line("could not keep the old resume point: %s" % exc)
 
 
 def fresh_override():
@@ -2193,6 +2227,8 @@ def play_once(args, cap, shader, fresh, asked, repick):
     if not asked and not needs_picker(len(joypads), cap):
         for _kind, _index, _path, dev in pads_raw:
             dev.close()
+        if fresh:
+            preserve_auto_state(rom_of(args))
         override = fresh_override() if fresh else guard_override()
         repick.override = override
         return run_retroarch(args, override, shader=shader, repick=repick,
@@ -2342,6 +2378,11 @@ def play_once(args, cap, shader, fresh, asked, repick):
         pygame.display.flip()
         clock.tick(60)
 
+    if launch and fresh and load_slot is None:
+        # Only on the first pass. Coming back from the picker mid-game carries
+        # the game across in a slot of its own, and the resume point was put
+        # aside when this game first started.
+        preserve_auto_state(rom_of(args))
     override = write_override(pads, slots, fresh, slot=load_slot) \
         if launch else None
     for p in pads:
