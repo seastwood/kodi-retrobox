@@ -11,6 +11,20 @@ import shutil
 import sys
 import tempfile
 
+def repo_script(name):
+    """The copy in this checkout, falling back to the installed one.
+
+    These tests used to load ~/.local/bin/<name> outright -- the deployed copy.
+    On the machine this was written on those are the same file, because the
+    installer symlinks them; on a fresh clone they are not, so the suite
+    quietly judged whatever happened to be installed and passed or failed on
+    code that was not in front of it. A clone's tests should test the clone.
+    """
+    here = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "bin", name)
+    return here if os.path.exists(here) else os.path.expanduser("~/.local/bin/" + name)
+
+
 sys.argv = ["x"]
 
 
@@ -21,8 +35,8 @@ def load(name, path):
     return mod
 
 
-g = load("guard", os.path.expanduser("~/.local/bin/ra_guard.py"))
-rp = load("rp", os.path.expanduser("~/.local/bin/ra_players.py"))
+g = load("guard", repo_script("ra_guard.py"))
+rp = load("rp", repo_script("ra_players.py"))
 
 fails = []
 

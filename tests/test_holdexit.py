@@ -11,8 +11,22 @@ import sys
 import threading
 import time
 
+def repo_script(name):
+    """The copy in this checkout, falling back to the installed one.
+
+    These tests used to load ~/.local/bin/<name> outright -- the deployed copy.
+    On the machine this was written on those are the same file, because the
+    installer symlinks them; on a fresh clone they are not, so the suite
+    quietly judged whatever happened to be installed and passed or failed on
+    code that was not in front of it. A clone's tests should test the clone.
+    """
+    here = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "bin", name)
+    return here if os.path.exists(here) else os.path.expanduser("~/.local/bin/" + name)
+
+
 sys.argv = ["x"]
-ldr = importlib.machinery.SourceFileLoader("rp", os.path.expanduser("~/.local/bin/ra_players.py"))
+ldr = importlib.machinery.SourceFileLoader("rp", repo_script("ra_players.py"))
 m = importlib.util.module_from_spec(importlib.util.spec_from_loader("rp", ldr))
 ldr.exec_module(m)
 import evdev
