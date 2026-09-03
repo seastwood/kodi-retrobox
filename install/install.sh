@@ -247,6 +247,31 @@ echo "$OUTSIDE_ADDONS" | while read -r id url; do
   fi
 done
 
+# Most of those are only a directory: clone it and Kodi has the screen. Steam
+# is not. It brings a menu tile, a privileged helper that lets it install
+# Steam later without anybody typing a password at a television, and the
+# switch that tells Kodi it may run the add-on at all -- Kodi registers one it
+# merely finds on disk with enabled=0 and then answers RunScript with "not
+# executing non-existing script", which reads as a broken add-on. Its own
+# install.sh does all three, is idempotent, and knows it is already standing
+# in ~/.kodi/addons, so it is handed over to rather than copied from.
+STEAM_ADDON="$TARGET_HOME/.kodi/addons/script.steam"
+if [ "$DRY" = 1 ]; then
+  skip "would run $STEAM_ADDON/install.sh"
+elif [ ! -x "$STEAM_ADDON/install.sh" ]; then
+  [ -d "$STEAM_ADDON" ] && warn "no install.sh in $STEAM_ADDON"
+elif [ "$TARGET_HOME" != "$HOME" ]; then
+  # It installs for whoever runs it: a sudoers file, a tile in this user's
+  # Kodi. None of that belongs to a throwaway --home directory.
+  skip "not setting up Steam (installing into $TARGET_HOME)"
+else
+  if "$STEAM_ADDON/install.sh" 2>&1 | sed 's/^/  /'; then
+    ok "Steam add-on set up"
+  else
+    warn "the Steam add-on did not finish setting up; run $STEAM_ADDON/install.sh"
+  fi
+fi
+
 # ----------------------------------------------------------- fourth player --
 # Remote couch co-op: a guest opens a page somewhere else, plugs in their own
 # controller and takes a seat in the game on this television. Its own project
