@@ -266,11 +266,12 @@ back yourself. See [INSTALL.md](INSTALL.md#restoring-from-a-backup).
 
     <clone>/tests/  →  run any of them with python3
 
-428 checks covering the button mapping, the player picker, the sync pipeline,
-the config guard, the hold-to-exit feedback, carrying a game across a
-re-pick without losing a save state, Bluetooth pairing and USB/IP. They
-use synthetic devices and fake ROM trees, so they touch nothing real, and
-`install.sh` runs them as its last phase.
+409 checks covering the button mapping, the player picker, the sync pipeline,
+the config guard, the hold-to-exit feedback, and carrying a game across a
+re-pick without losing a save state. They use synthetic devices and fake ROM
+trees, so they touch nothing real, and `install.sh` runs them as its last
+phase. Bluetooth pairing and USB/IP are tested in their own repositories,
+beside the add-ons themselves.
 
 ## Working on it
 

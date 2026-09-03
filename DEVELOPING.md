@@ -43,10 +43,12 @@ stranger start from it.
 
     tests/   →  run any of them with python3
 
-223 checks across seven suites: button mapping, the player picker, the sync
-pipeline, the config guard, the hold-to-exit feedback, Bluetooth pairing and
-USB/IP. They use synthetic devices and fake ROM trees, so they touch nothing
-real. `install.sh` runs the lot as its last phase.
+409 checks across nineteen suites: button mapping, the player picker, the sync
+pipeline, the config guard, the hold-to-exit feedback, and carrying a game
+across a re-pick. They use synthetic devices and fake ROM trees, so they touch
+nothing real. `install.sh` runs the lot as its last phase. Bluetooth pairing
+and USB/IP have suites of their own, in the repositories that hold those
+add-ons.
 
 `install.sh --home DIR` runs the whole install against a throwaway directory
 instead of a real account.

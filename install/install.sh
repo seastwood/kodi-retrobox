@@ -208,7 +208,8 @@ fi
 # against -- two copies of the same add-on in two repositories drift the
 # moment either is touched, and the drift is silent.
 say "Add-ons kept in their own repositories"
-OUTSIDE_ADDONS="script.usbip https://github.com/seastwood/kodi-usbip.git"
+OUTSIDE_ADDONS="script.usbip https://github.com/seastwood/kodi-usbip.git
+script.bluetooth https://github.com/seastwood/kodi-bluetooth.git"
 echo "$OUTSIDE_ADDONS" | while read -r id url; do
   [ -n "$id" ] || continue
   dst="$TARGET_HOME/.kodi/addons/$id"
@@ -241,7 +242,7 @@ echo "$OUTSIDE_ADDONS" | while read -r id url; do
   elif git clone --quiet "$url" "$dst" 2>/dev/null; then
     ok "$id cloned from $url"
   else
-    warn "could not clone $url -- USB over IP will be missing until it is"
+    warn "could not clone $url -- $id will be missing until it is"
   fi
 done
 
