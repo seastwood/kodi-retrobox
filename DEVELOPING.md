@@ -43,9 +43,9 @@ stranger start from it.
 
     tests/   →  run any of them with python3
 
-409 checks across nineteen suites: button mapping, the player picker, the sync
-pipeline, the config guard, the hold-to-exit feedback, and carrying a game
-across a re-pick. They use synthetic devices and fake ROM trees, so they touch
+429 checks across twenty suites: button mapping, the player picker, the sync
+pipeline, the config guard, the hold-to-exit feedback, the Bluetooth setting a
+Switch Pro Controller needs, and carrying a game across a re-pick. They use synthetic devices and fake ROM trees, so they touch
 nothing real. `install.sh` runs the lot as its last phase. Bluetooth pairing
 and USB/IP have suites of their own, in the repositories that hold those
 add-ons.

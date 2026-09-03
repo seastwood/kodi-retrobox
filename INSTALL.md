@@ -62,8 +62,9 @@ It exits with the number of failures. **Every phase is idempotent**: the fix
 for a failure is to deal with the cause and run the exact same command again.
 Nothing is done twice.
 
-The phases are packages, directories, code, fonts and icons, configuration,
-autostart, game folders, cores, shaders, timers, PC games (with
+The phases are packages, directories, code, the add-ons and Fourth Player that
+are cloned from their own repositories, fonts and icons, configuration, the
+Switch Pro Controller settings, autostart, game folders, cores, shaders, timers, PC games (with
 `--with-optional`), Kodi, and last the test suites — a few hundred checks that
 what it just built actually works. Then it prints what is left to do.
 
@@ -104,6 +105,14 @@ which systems want which files, and that folder has a README too.
 
 If a game will not start, the launcher says so on the television and names the
 file it wanted. That message is the authority.
+
+## 6. Fourth Player, for a guest who is not in the room
+
+Nothing to install: it came with the console, and FOURTH PLAYER is on the home
+menu. What is not on this machine is the way in from outside — forward the
+WebRTC UDP ports on your router, and point a hostname at the box.
+`~/fourth-player/docs/NETWORK.md` walks through both, and the installer prints
+the same short list when it finishes.
 
 ## Updating
 
@@ -190,6 +199,7 @@ section of the README for the two steps that follow.
     install/install.sh --dry-run         # what it would do, changing nothing
     install/install.sh --skip-packages   # when only apt failed, skip it
     install/adopt.sh --check             # which paths would be rewritten
+    install/switchpro.sh                 # a Switch Pro Controller will not pair
 
 To re-run the checks on their own:
 

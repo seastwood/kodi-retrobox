@@ -246,6 +246,76 @@ echo "$OUTSIDE_ADDONS" | while read -r id url; do
   fi
 done
 
+# ----------------------------------------------------------- fourth player --
+# Remote couch co-op: a guest opens a page somewhere else, plugs in their own
+# controller and takes a seat in the game on this television. Its own project
+# like the add-ons above, and cloned for the same reason -- but it is not a
+# flat add-on repository, so it cannot join that loop. The Kodi screen at
+# addons/script.fourthplayer is one face of a server that wants packages, a
+# udev rule for /dev/uinput, a sudoers line for the GPU clocks and a user
+# service, and only its own installer knows all of that. So this fetches the
+# repository and hands over to it, rather than linking the add-on directory
+# and leaving the menu entry to fail the first time somebody chooses it.
+say "Fourth Player"
+FP_URL=https://github.com/seastwood/Fourth-Player.git
+FP_DIR="$TARGET_HOME/fourth-player"
+FP_ADDON="$TARGET_HOME/.kodi/addons/script.fourthplayer"
+if [ "$DRY" = 1 ]; then
+  skip "would clone $FP_URL into $FP_DIR"
+elif ! command -v git >/dev/null 2>&1; then
+  warn "git is not installed, so Fourth Player was not fetched"
+elif [ -d "$FP_DIR/.git" ]; then
+  if git -C "$FP_DIR" pull --ff-only --quiet 2>/dev/null; then
+    ok "fourth-player up to date ($(git -C "$FP_DIR" rev-parse --short HEAD))"
+  else
+    warn "fourth-player could not be updated; left as it is"
+  fi
+else
+  # Before this phase existed the way to get it here was to rsync a working
+  # tree across, which leaves a directory that looks right and cannot be
+  # pulled. Move it aside rather than delete it: the settings and the session
+  # state are elsewhere, but somebody may have edited this copy in place.
+  if [ -e "$FP_DIR" ]; then
+    mv "$FP_DIR" "$FP_DIR.replaced.$(date +%s)"
+    ok "kept the old fourth-player as fourth-player.replaced.*"
+  fi
+  if git clone --quiet "$FP_URL" "$FP_DIR" 2>/dev/null; then
+    ok "fourth-player cloned from $FP_URL"
+  else
+    warn "could not clone $FP_URL -- Fourth Player will be missing until it is"
+  fi
+fi
+
+if [ "$DRY" = 1 ]; then
+  skip "would run $FP_DIR/install/install.sh"
+elif [ ! -x "$FP_DIR/install/install.sh" ]; then
+  [ -d "$FP_DIR" ] && warn "no install/install.sh in $FP_DIR"
+elif [ "$TARGET_HOME" != "$HOME" ]; then
+  # It installs for whoever runs it: a user service, a udev rule, a sudoers
+  # file. None of that belongs to a throwaway --home directory.
+  skip "not installing Fourth Player (installing into $TARGET_HOME)"
+elif [ "$SKIP_PACKAGES" = 1 ]; then
+  skip "asked to skip packages, and Fourth Player installs its own"
+  skip "run $FP_DIR/install/install.sh when you are ready for it"
+else
+  if [ "$(id -u)" != 0 ] && ! sudo -n true 2>/dev/null; then
+    warn "this phase needs sudo as well; you will be prompted"
+  fi
+  "$FP_DIR/install/install.sh" 2>&1 | sed 's/^/   /'
+  # A pipeline's status is the last command's, and sed always succeeds, so ask
+  # for the installer's own -- otherwise a failed install reads as a good one.
+  [ "${PIPESTATUS[0]}" = 0 ] || warn "the Fourth Player installer did not finish"
+fi
+
+# FOURTH PLAYER appears on the home menu when the add-on is on disk and not
+# before, which is what makes this the check worth making: the console is
+# meant to arrive with it, and printing "done" over a home menu that has no
+# way to reach it would be the one failure nobody would go looking for.
+if [ "$DRY" != 1 ] && [ "$TARGET_HOME" = "$HOME" ] && [ "$SKIP_PACKAGES" = 0 ] &&
+   [ ! -e "$FP_ADDON" ]; then
+  bad "Fourth Player is not on the home menu; run $FP_DIR/install/install.sh"
+fi
+
 # ------------------------------------------------------------------ assets --
 say "Fonts and icons"
 if [ -f "$REPO/assets/fonts/PressStart2P.ttf" ]; then
@@ -312,6 +382,28 @@ if [ -d "$LOCAL" ]; then
   ok "restored this machine's captured state from local/"
 else
   skip "no captured state (a fresh install: add ROMs and let the sync build the playlists)"
+fi
+
+# ---------------------------------------------------------- pro controller --
+# A Nintendo Switch Pro Controller will not stay paired with a stock BlueZ:
+# the input service refuses HID connections from devices that are not bonded,
+# and the pad connects unbonded. It pairs, drops, and says nothing about why.
+# switchpro.sh turns that limit off and names the adapter Nintendo, which the
+# pad is happier against. Both are machine settings rather than this user's,
+# which is why they are here and not in the Bluetooth add-on: whoever installs
+# this console should not have to find a forum thread first.
+say "Nintendo Switch Pro Controller"
+if [ ! -x "$HERE/switchpro.sh" ]; then
+  warn "switchpro.sh is missing; a Pro Controller may not pair"
+elif [ "$DRY" = 1 ]; then
+  "$HERE/switchpro.sh" --dry-run 2>&1 | sed 's/^/   --    /'
+elif [ "$TARGET_HOME" != "$HOME" ]; then
+  # /etc/bluetooth and the adapter belong to the machine, not to the throwaway
+  # home being installed into.
+  skip "not touching Bluetooth (installing into $TARGET_HOME)"
+else
+  "$HERE/switchpro.sh" 2>&1 | sed 's/^/   /'
+  [ "${PIPESTATUS[0]}" = 0 ] || warn "the Pro Controller settings did not all apply"
 fi
 
 # --------------------------------------------------------------- autostart --

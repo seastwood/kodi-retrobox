@@ -46,6 +46,11 @@ panel.
 * **Hold Start for two seconds to quit**, with a progress bar drawn over the
   running game. Games auto-save and auto-resume, so quitting is closer to
   putting a console to sleep.
+* **A fourth player who is not in the room.** A guest opens a page, plugs a
+  controller into their own machine, and it turns up here as another pad while
+  the game is streamed back to them. FOURTH PLAYER on the home menu runs the
+  session: a join code on the television, who is sitting in which seat, and the
+  picture quality. See *Fourth Player* below.
 * **Failures are visible.** A missing BIOS or a missing core says so on the
   television instead of dropping you back to the menu in silence.
 * **It looks after itself.** The RetroArch config is repaired if a bad exit
@@ -56,8 +61,8 @@ panel.
 ## Layout
 
     bin/         the scripts, symlinked into ~/.local/bin
-    addons/      four hand-written Kodi add-ons, symlinked into ~/.kodi/addons
-    tests/       seven suites, 223 checks, symlinked to ~/.local/share/gametests
+    addons/      two hand-written Kodi add-ons, symlinked into ~/.kodi/addons
+    tests/       twenty suites, 429 checks, symlinked to ~/.local/share/gametests
     assets/      the pixel font and the menu icons
     templates/   the RetroArch settings this console sets
     system/      what to install: packages, PPAs, cores, BIOS notes, units
@@ -93,8 +98,10 @@ that adds Wine and builds JoyShockMapper (see *PC games* below).
 That adds the libretro PPA, installs the packages in
 `system/packages.required.txt`, creates the directory layout, links the code
 into place, merges `templates/retroarch-settings.conf` into RetroArch's config,
-downloads the cores in `system/cores.txt` and the glsl shader pack, enables the
-timers, and runs the test suites. It is idempotent — run it again after fixing
+downloads the cores in `system/cores.txt` and the glsl shader pack, clones the
+add-ons and Fourth Player that live in their own repositories, sets the two
+Bluetooth settings a Switch Pro Controller needs, enables the timers, and runs
+the test suites. It is idempotent — run it again after fixing
 whatever went wrong.
 
 Flags: `--dry-run`, `--skip-packages`, `--with-optional` (WineHQ, for the PC
@@ -168,6 +175,27 @@ game runs and unloaded afterwards. It is built from source by
 mappings are installed with it. The CONTROLLER entry on the Kodi home menu
 edits them with a controller, so that needs no keyboard either.
 
+### Controllers over Bluetooth
+
+The BLUETOOTH entry pairs a pad from the sofa, and a **Nintendo Switch Pro
+Controller** needs two things arranged before it will pair with any Linux
+machine — so `install.sh` arranges them, rather than leaving somebody to find
+the forum thread the hard way:
+
+* `ClassicBondedOnly=false` in `/etc/bluetooth/input.conf`. BlueZ's input
+  service refuses HID connections from devices that are not bonded, and the
+  Pro Controller connects unbonded. The symptom is a pad that appears to pair
+  and then drops a second later, with nothing in the log that points at the
+  cause.
+* **The adapter is named `Nintendo`.** The pad is markedly happier against a
+  host with that name. It is an alias only — the machine's hostname is not
+  touched — and it is what phones and other machines will see this console as.
+
+`install/switchpro.sh` is that phase on its own, safe to run again, and it
+only asks for sudo when the file actually needs changing. It restarts
+`bluetooth` when it changes something, which drops whatever pad is connected
+at that moment.
+
 ### USB over IP
 
 The USB DEVICES entry borrows a controller plugged into another machine (a Pi,
@@ -206,6 +234,30 @@ server the usbip tools, a running `usbipd`, and passwordless sudo for its own
 `usbip` binary — whose path differs by distro, so check it with
 `command -v usbip` on that machine. Check setup inside the add-on lists the
 same three steps.
+
+### Fourth Player
+
+The FOURTH PLAYER entry gives a seat to somebody who is not in the room. They
+open a page, plug a controller into their own machine, and it arrives here as
+another pad on the television while the game is streamed back to them. The
+add-on is the session from the sofa: turn it on, show or hide the join code on
+the screen, set the picture quality, and see who is in which seat.
+
+It is its own project — [Fourth Player][fp] — and `install.sh` clones it for
+the same reason it clones the add-ons above: one copy, and it is the one its
+own tests run against. It is not a flat add-on repository, though. The Kodi
+screen is one face of a server, so the clone goes to `~/fourth-player` and
+install.sh hands over to that project's own `install/install.sh`, which is the
+only thing that knows about its packages, the `/dev/uinput` rule, the sudoers
+line for the GPU clocks and the user service. `install/update.sh` pulls it
+forward with everything else, so it keeps step with the console.
+
+[fp]: https://github.com/seastwood/Fourth-Player
+
+What is left over is the part that is not on this machine: forwarding the
+WebRTC ports on the router, and pointing a hostname at the box. Its installer
+prints that list when it finishes, and its own `docs/NETWORK.md` walks through
+both.
 
 ## Settings
 
@@ -266,12 +318,13 @@ back yourself. See [INSTALL.md](INSTALL.md#restoring-from-a-backup).
 
     <clone>/tests/  →  run any of them with python3
 
-409 checks covering the button mapping, the player picker, the sync pipeline,
-the config guard, the hold-to-exit feedback, and carrying a game across a
-re-pick without losing a save state. They use synthetic devices and fake ROM
+429 checks covering the button mapping, the player picker, the sync pipeline,
+the config guard, the hold-to-exit feedback, the Bluetooth setting a Switch Pro
+Controller needs, and carrying a game across a re-pick without losing a save
+state. They use synthetic devices and fake ROM
 trees, so they touch nothing real, and `install.sh` runs them as its last
-phase. Bluetooth pairing and USB/IP are tested in their own repositories,
-beside the add-ons themselves.
+phase. Bluetooth pairing, USB/IP and Fourth Player are tested in their own
+repositories, beside the code itself.
 
 ## Working on it
 
