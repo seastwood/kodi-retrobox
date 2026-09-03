@@ -210,7 +210,8 @@ fi
 say "Add-ons kept in their own repositories"
 OUTSIDE_ADDONS="script.usbip https://github.com/seastwood/kodi-usbip.git
 script.bluetooth https://github.com/seastwood/kodi-bluetooth.git
-script.steam https://github.com/seastwood/kodi-steam.git"
+script.steam https://github.com/seastwood/kodi-steam.git
+script.moonlight https://github.com/seastwood/kodi-moonlight.git"
 echo "$OUTSIDE_ADDONS" | while read -r id url; do
   [ -n "$id" ] || continue
   dst="$TARGET_HOME/.kodi/addons/$id"
@@ -255,6 +256,12 @@ done
 # executing non-existing script", which reads as a broken add-on. Its own
 # install.sh does all three, is idempotent, and knows it is already standing
 # in ~/.kodi/addons, so it is handed over to rather than copied from.
+# Two of them now, and for the same reason: an add-on that is only a
+# directory needs nothing after the clone, and these two bring a menu tile and
+# the switch that tells Kodi it may run them. Steam brings a privileged helper
+# as well; Moonlight needs no root at all, because what it installs is a
+# Flatpak for one user. Both installers are idempotent and both know they are
+# already standing in ~/.kodi/addons.
 STEAM_ADDON="$TARGET_HOME/.kodi/addons/script.steam"
 if [ "$DRY" = 1 ]; then
   skip "would run $STEAM_ADDON/install.sh"
@@ -269,6 +276,21 @@ else
     ok "Steam add-on set up"
   else
     warn "the Steam add-on did not finish setting up; run $STEAM_ADDON/install.sh"
+  fi
+fi
+
+MOONLIGHT_ADDON="$TARGET_HOME/.kodi/addons/script.moonlight"
+if [ "$DRY" = 1 ]; then
+  skip "would run $MOONLIGHT_ADDON/install.sh"
+elif [ ! -x "$MOONLIGHT_ADDON/install.sh" ]; then
+  [ -d "$MOONLIGHT_ADDON" ] && warn "no install.sh in $MOONLIGHT_ADDON"
+elif [ "$TARGET_HOME" != "$HOME" ]; then
+  skip "not setting up Moonlight (installing into $TARGET_HOME)"
+else
+  if "$MOONLIGHT_ADDON/install.sh" 2>&1 | sed 's/^/  /'; then
+    ok "Moonlight add-on set up"
+  else
+    warn "the Moonlight add-on did not finish; run $MOONLIGHT_ADDON/install.sh"
   fi
 fi
 

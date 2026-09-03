@@ -174,6 +174,19 @@ def build():
         out.append(sc("steam", "STEAM", "RunScript(script.steam)", icon,
                       "BIG PICTURE"))
 
+    # Moonlight (script.moonlight), beside Steam: both are somewhere else's
+    # games played on this television, one from a shop and one from another
+    # machine in the house. Guarded on the add-on being installed for the same
+    # reason everything else here is -- this menu is rebuilt after every games
+    # sync, and an entry for a missing add-on would come back every time and
+    # do nothing when chosen.
+    if os.path.isdir(os.path.expanduser("~/.kodi/addons/script.moonlight")):
+        icon = os.path.join(ICON, "_moonlight.png")
+        if not os.path.exists(icon):
+            icon = SKINICON + "DefaultAddonGame.png"
+        out.append(sc("moonlight", "MOONLIGHT", "RunScript(script.moonlight)",
+                      icon, "STREAM FROM A PC"))
+
     # Controller mapping editor for the PC games (script.joyshock). Sits next
     # to PC GAMES because that is the only thing it configures.
     out.append(sc("controller", "CONTROLLER",
