@@ -209,7 +209,8 @@ fi
 # moment either is touched, and the drift is silent.
 say "Add-ons kept in their own repositories"
 OUTSIDE_ADDONS="script.usbip https://github.com/seastwood/kodi-usbip.git
-script.bluetooth https://github.com/seastwood/kodi-bluetooth.git"
+script.bluetooth https://github.com/seastwood/kodi-bluetooth.git
+script.steam https://github.com/seastwood/kodi-steam.git"
 echo "$OUTSIDE_ADDONS" | while read -r id url; do
   [ -n "$id" ] || continue
   dst="$TARGET_HOME/.kodi/addons/$id"

@@ -162,6 +162,18 @@ def build():
                       "ActivateWindow(Games,%s,return)" % url, icon,
                       "%d GAMES" % len(pcs)))
 
+    # Steam (script.steam), next to PC GAMES because it is the other half of
+    # the same shelf: the games that came from a shop rather than from a
+    # folder. Only when the add-on is actually installed -- this menu is
+    # rebuilt every time the games are synced, so an entry for a missing
+    # add-on would come back after every sync and do nothing when chosen.
+    if os.path.isdir(os.path.expanduser("~/.kodi/addons/script.steam")):
+        icon = os.path.join(ICON, "_steam.png")
+        if not os.path.exists(icon):
+            icon = SKINICON + "DefaultAddonGame.png"
+        out.append(sc("steam", "STEAM", "RunScript(script.steam)", icon,
+                      "BIG PICTURE"))
+
     # Controller mapping editor for the PC games (script.joyshock). Sits next
     # to PC GAMES because that is the only thing it configures.
     out.append(sc("controller", "CONTROLLER",
