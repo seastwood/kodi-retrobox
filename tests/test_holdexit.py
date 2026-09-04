@@ -119,6 +119,88 @@ check(drawn > 8, "a one-second hold redrew the bar %d times (smooth, not stepped
 check(hid_fast, "letting go hid it immediately, got %r" % (bar.calls[-1:] or None))
 check(full >= 0.99, "a full hold reached the end of the bar, got %r" % full)
 
+print("\n-- select and B, which is the other way out --")
+# In addition to Start, never instead of it. Reported as wanting a second
+# gesture for a pad held differently, or a game that wants Start for itself.
+#
+# "B" is the button *printed* B, which pad_controls answers per pad: on a
+# Nintendo layout that is input_b_btn (the bottom one) and on everything else
+# it is input_a_btn (the right one). This synthetic pad has no profile, so it
+# takes the fallback, where BTN_EAST is back -- the same button an Xbox pad
+# prints B on.
+# Axes as well as buttons: a device with no axes is not a gamepad as far as
+# input_devices() is concerned, and a pad that is never classified as one is a
+# pad this watcher never opens -- which made every check below pass by
+# watching nothing at all.
+combo_caps = {e.EV_KEY: [e.BTN_SOUTH, e.BTN_EAST, e.BTN_START, e.BTN_SELECT],
+              e.EV_ABS: [(e.ABS_X, evdev.AbsInfo(0, -32768, 32767, 0, 0, 0)),
+                         (e.ABS_Y, evdev.AbsInfo(0, -32768, 32767, 0, 0, 0))]}
+try:
+    pad2 = UInput(combo_caps, name="Synthetic Combo Pad",
+                  vendor=0x9998, product=0x9998)
+except Exception as exc:
+    print("  SKIP  cannot create a virtual pad: %s" % exc)
+    pad2 = None
+
+if pad2 is not None:
+    time.sleep(1.0)
+    quits = []
+    real_quit = m.send_quit
+    m.send_quit = lambda: (quits.append(1), True)[1]
+    bar2 = FakeBar()
+    stop2 = threading.Event()
+    threading.Thread(target=m.watch_hold_to_exit, args=(stop2, bar2),
+                     daemon=True).start()
+    time.sleep(0.6)
+
+    print("   B on its own, which must do nothing...")
+    pad2.write(e.EV_KEY, e.BTN_EAST, 1); pad2.syn()
+    time.sleep(1.2)
+    b_alone = [c for c in bar2.calls if c != "hide"] == []
+    pad2.write(e.EV_KEY, e.BTN_EAST, 0); pad2.syn()
+    time.sleep(0.3)
+
+    print("   select and B together, held the whole way...")
+    bar2.calls[:] = []
+    pad2.write(e.EV_KEY, e.BTN_SELECT, 1); pad2.syn()
+    time.sleep(0.1)
+    pad2.write(e.EV_KEY, e.BTN_EAST, 1); pad2.syn()
+    time.sleep(2.4)
+    combo_full = max((c for c in bar2.calls if c != "hide"), default=0)
+    combo_caption = bar2.captions[-1] if bar2.captions else ""
+    quit_asked = len(quits)
+    pad2.write(e.EV_KEY, e.BTN_EAST, 0); pad2.syn()
+    pad2.write(e.EV_KEY, e.BTN_SELECT, 0); pad2.syn()
+    time.sleep(0.3)
+
+    print("   one of the two let go half way...")
+    bar2.calls[:] = []
+    pad2.write(e.EV_KEY, e.BTN_SELECT, 1); pad2.syn()
+    pad2.write(e.EV_KEY, e.BTN_EAST, 1); pad2.syn()
+    time.sleep(1.0)
+    pad2.write(e.EV_KEY, e.BTN_EAST, 0); pad2.syn()
+    time.sleep(0.25)
+    let_go = bar2.calls and bar2.calls[-1] == "hide"
+    quits_after = len(quits)
+    time.sleep(1.6)                   # long enough to have quit, had it counted
+    no_late_quit = len(quits) == quits_after
+    pad2.write(e.EV_KEY, e.BTN_SELECT, 0); pad2.syn()
+
+    stop2.set()
+    time.sleep(0.4)
+    pad2.close()
+    m.send_quit = real_quit
+
+    check(b_alone, "B on its own draws nothing and quits nothing")
+    check(combo_full >= 0.99,
+          "the pair fills the bar the whole way, got %r" % combo_full)
+    check(combo_caption == "HOLD TO EXIT",
+          "and says it is an exit, got %r" % combo_caption)
+    check(quit_asked >= 1, "and asks RetroArch to quit, like holding Start")
+    check(let_go, "letting go of either one hides the bar at once")
+    check(no_late_quit,
+          "and nothing quits afterwards: half a gesture is not the gesture")
+
 print("\n-- the hold has to do the quitting itself --")
 # RetroArch's own hold-Start combo only listens to player 1. With two pads
 # attached, holding Start on the second one filled the bar to the end and then

@@ -730,7 +730,7 @@ def hold_pads(existing):
     Handles already being read are kept rather than reopened, because reopening
     one loses whatever it had buffered.
     """
-    held = {dev.path: entry for entry in existing for dev, _s, _x in [entry]}
+    held = {dev.path: entry for entry in existing for dev, _s, _x, _b in [entry]}
     keep, seen = [], set()
     for kind, _index, path, dev in input_devices():
         seen.add(path)
@@ -738,14 +738,20 @@ def hold_pads(existing):
             dev.close()                   # keep the handle already in use
             keep.append(held[path])
             continue
-        starts, selects = set(), set()
+        starts, selects, backs = set(), set(), set()
         if kind == "pad":
             btn, _labels = pad_controls(dev)
             starts = {code for code, action in btn.items() if action == "start"}
             selects = {code for code, action in btn.items()
                        if action == "select"}
+            # The button printed B. Read from the profile like the others and
+            # never as a fixed code: xpad calls the left face button BTN_X
+            # while the positional naming calls the same thing BTN_NORTH, and
+            # a generic HID pad is numbered in report order -- so "B" is a
+            # question only the pad's own profile can answer.
+            backs = {code for code, action in btn.items() if action == "back"}
         if starts or selects:
-            keep.append((dev, starts, selects))
+            keep.append((dev, starts, selects, backs))
         else:
             dev.close()
     gone = False
@@ -776,6 +782,15 @@ def watch_hold_to_exit(stop, bar=None, repick=None, rom=""):
     holds = {"start": {"since": None, "done": False,
                        "seconds": HOLD_SECONDS,
                        "caption": "HOLD TO EXIT"},
+             # Select and B together, which is the other way out. Start alone
+             # still works and is untouched: this is an addition, for a pad
+             # somebody is holding differently or a game that wants Start for
+             # itself. Two buttons rather than one, so it needs no grace
+             # period of its own -- nobody presses this pair by accident in
+             # the way they press Start.
+             "combo": {"since": None, "done": False,
+                       "seconds": HOLD_SECONDS,
+                       "caption": "HOLD TO EXIT"},
              # Longer, because Select is an ordinary in-game button on more
              # games than Start is, and interrupting a game by accident costs
              # everybody playing it.
@@ -783,6 +798,9 @@ def watch_hold_to_exit(stop, bar=None, repick=None, rom=""):
                         "seconds": REPICK_SECONDS,
                         "caption": "HOLD TO CHANGE PLAYERS"}}
     showing = False
+    # Which of Select and B are down, per pad. Only those two: everything else
+    # here is a single button whose own press and release is the whole story.
+    held_now = {}
     next_scan = time.time() + HOLD_RESCAN_SECONDS
     next_flag = time.time()
     try:
@@ -798,13 +816,14 @@ def watch_hold_to_exit(stop, bar=None, repick=None, rom=""):
                         showing = False
                     for h in holds.values():
                         h["since"], h["done"] = None, False
+                    held_now.clear()
             # Somebody asking from a browser, which is the same request without
             # a controller to make it on.
             if repick is not None and time.time() >= next_flag:
                 next_flag = time.time() + 0.4
                 if repick_asked() and not repick.is_set():
                     start_repick(repick, rom)
-            for dev, starts, selects in pads:
+            for dev, starts, selects, backs in pads:
                 try:
                     event = dev.read_one()
                 except OSError:
@@ -814,9 +833,24 @@ def watch_hold_to_exit(stop, bar=None, repick=None, rom=""):
                     if event.type == evdev.ecodes.EV_KEY:
                         if event.code in starts:
                             which = "start"
-                        elif event.code in selects and repick is not None:
+                        elif event.code in selects:
                             which = "select"
-                    if which is not None:
+                        elif event.code in backs:
+                            which = "back"
+                        if which in ("select", "back"):
+                            # Held together they are the way out; held alone,
+                            # Select is the player picker and B is an ordinary
+                            # button. So the pair is tracked per pad rather
+                            # than inferred from either one's own hold.
+                            down = held_now.setdefault(dev.path, set())
+                            if event.value == 1:
+                                down.add(which)
+                            elif event.value == 0:
+                                down.discard(which)
+                    if which == "back":
+                        which = None      # B alone starts no hold of its own
+                    if which is not None and (which != "select"
+                                              or repick is not None):
                         if event.value == 1:
                             holds[which]["since"] = time.time()
                         elif event.value == 0:
@@ -829,6 +863,29 @@ def watch_hold_to_exit(stop, bar=None, repick=None, rom=""):
                         event = dev.read_one()
                     except OSError:
                         event = None
+
+            # The pair, asked once across every pad rather than once per pad.
+            # Per pad it cancelled itself: the first controller starts the
+            # hold, and the next one in the list is holding nothing, so it
+            # took it straight back off again. Anybody's controller may make
+            # this gesture, which is the same rule the rest of the bar
+            # follows -- it watches every pad, not player one's.
+            pair = any({"select", "back"} <= held_now.get(dev.path, set())
+                       for dev, _s, _x, _b in pads)
+            if pair and holds["combo"]["since"] is None:
+                # Starting the combo cancels the plain Select hold: somebody
+                # holding both asked to leave, not to change players, and two
+                # bars filling at once would be the machine arguing with
+                # itself.
+                holds["combo"]["since"] = time.time()
+                holds["select"]["since"] = None
+                holds["select"]["done"] = False
+            elif not pair and holds["combo"]["since"] is not None:
+                if showing:
+                    bar.hide()
+                    showing = False
+                holds["combo"]["since"] = None
+                holds["combo"]["done"] = False
             for name, hold in holds.items():
                 if hold["since"] is None:
                     continue
@@ -840,7 +897,7 @@ def watch_hold_to_exit(stop, bar=None, repick=None, rom=""):
                 showing = True
                 if fraction < 1.0 or hold["done"]:
                     continue
-                if name == "start":
+                if name in ("start", "combo"):
                     hold["done"] = send_quit()
                 elif not repick.is_set():
                     hold["done"] = True
@@ -852,7 +909,7 @@ def watch_hold_to_exit(stop, bar=None, repick=None, rom=""):
     finally:
         bar.hide()
         bar.close()
-        for dev, _starts, _selects in pads:
+        for dev, _starts, _selects, _backs in pads:
             try:
                 dev.close()
             except OSError:
