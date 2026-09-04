@@ -1,0 +1,13 @@
+[Unit]
+Description=Teach Kodi the controllers that are plugged in
+
+[Service]
+Type=oneshot
+# udev has only just created the device node when the path unit fires, and a
+# pad read too early has no name and no capabilities yet -- which would map it
+# as something it is not, or skip it.
+ExecStartPre=/bin/sleep 2
+ExecStart=%h/.local/bin/kodi_padmap.py
+
+[Install]
+WantedBy=default.target

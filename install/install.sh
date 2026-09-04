@@ -549,14 +549,19 @@ else
 fi
 
 # ----------------------------------------------------------------- systemd --
-say "Timers"
+say "Timers and services"
+# retro-padmap.service writes a Kodi button map for whatever is plugged in, so
+# a controller works in the menus without anybody mapping it by hand. It runs
+# once at login for the pads that are already there, and retro-padmap.path
+# runs it again whenever /dev/input changes, which is a pad being plugged in.
 if [ "$DRY" = 1 ]; then
-  skip "would enable sync-games.timer and retro-backup.timer"
+  skip "would enable sync-games.timer, retro-backup.timer and retro-padmap.path"
 elif [ "$TARGET_HOME" != "$HOME" ]; then
   skip "not touching systemd (installing into $TARGET_HOME)"
 else
   systemctl --user daemon-reload 2>/dev/null
-  for t in sync-games.timer retro-backup.timer; do
+  for t in sync-games.timer retro-backup.timer \
+           retro-padmap.service retro-padmap.path; do
     if [ -f "$TARGET_HOME/.config/systemd/user/$t" ]; then
       systemctl --user enable --now "$t" 2>/dev/null && ok "$t enabled" ||
         warn "could not enable $t"

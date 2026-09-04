@@ -1,0 +1,12 @@
+[Unit]
+Description=Watch for controllers being plugged in
+
+[Path]
+# A pad appearing or leaving changes /dev/input. This fires several times for
+# one controller -- the event node, the js node -- which is harmless: writing
+# the maps is idempotent and never touches one that already exists.
+PathChanged=/dev/input
+Unit=retro-padmap.service
+
+[Install]
+WantedBy=default.target
