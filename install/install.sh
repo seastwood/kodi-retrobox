@@ -571,6 +571,21 @@ else
   done
 fi
 
+# -------------------------------------------------------------- security ---
+say "Security"
+# Advisory, never fatal: what it finds is mostly a decision rather than a
+# fault -- somebody may well want the Kodi web server reachable so a phone
+# remote can use it. The point is that the answer is said out loud once, on a
+# machine that has just been set up, rather than discovered later.
+if [ "$DRY" = 1 ]; then
+  skip "would check what this machine offers the network"
+elif [ -x "$HERE/security-check.sh" ]; then
+  "$HERE/security-check.sh" 2>&1 | sed 's/^/  /' || true
+  ok "re-run any time: install/security-check.sh (with sudo for the SSH check)"
+else
+  skip "no security-check.sh"
+fi
+
 # --------------------------------------------------------------- pc games ---
 if [ "$WITH_OPTIONAL" = 1 ]; then
   say "PC games"
