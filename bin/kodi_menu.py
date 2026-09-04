@@ -255,7 +255,10 @@ def build():
     # every time the games are synced, so an entry for a missing add-on would
     # come back after every sync and do nothing when chosen.
     if os.path.isdir(os.path.expanduser("~/.kodi/addons/script.fourthplayer")):
-        icon = os.path.join(ICON, "_multiplayer.png")
+        # Its own icon, not MULTIPLAYER's. The two rows were the same picture,
+        # and they are not the same thing: multiplayer is who is on the sofa,
+        # this is somebody who is not in the building.
+        icon = os.path.join(ICON, "_fourthplayer.png")
         if not os.path.exists(icon):
             icon = SKINICON + "DefaultAddonProgram.png"
         offer(out, seen, "fourthplayer", "fourthplayer", "FOURTH PLAYER",
