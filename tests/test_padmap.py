@@ -33,7 +33,7 @@ import time
 import evdev
 from evdev import UInput, ecodes as e
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
 KODI_SHIPPED = ("/usr/share/kodi/addons/peripheral.joystick/resources/"
                 "buttonmaps/xml/udev")
@@ -87,7 +87,10 @@ def named_files():
 
 print("-- the naming rule, against every file Kodi has named here --")
 pairs = list(named_files())
-check(len(pairs) >= 15, "found %d named files to check against" % len(pairs))
+# Kodi ships fourteen of these. A machine somebody has already mapped a pad
+# on has more, in userdata; a machine installed ten minutes ago has exactly
+# the fourteen. Asking for more than Kodi ships was asking for a used console.
+check(len(pairs) >= 10, "found %d named files to check against" % len(pairs))
 for name, vendor, product, buttons, axes, filename in pairs:
     got = kp.map_filename(name, vendor, product, buttons, axes)
     check(got == filename, "%r -> %s%s" % (

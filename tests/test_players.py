@@ -18,7 +18,7 @@ def repo_script(name):
     quietly judged whatever happened to be installed and passed or failed on
     code that was not in front of it. A clone's tests should test the clone.
     """
-    here = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    here = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
                         "bin", name)
     return here if os.path.exists(here) else os.path.expanduser("~/.local/bin/" + name)
 
