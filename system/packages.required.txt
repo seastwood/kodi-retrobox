@@ -44,3 +44,11 @@ rsync
 git
 curl
 unzip
+
+# How the Moonlight add-on installs Moonlight. This repository installs that
+# add-on, so this repository is what has to make sure the thing it needs is
+# here: on a machine without flatpak the MOONLIGHT entry can only say it
+# cannot do anything, which is a menu row that does not work on a console
+# somebody has just built. Mint ships it, Ubuntu does not always, and neither
+# is a thing to depend on.
+flatpak
