@@ -25,8 +25,19 @@ POLL = 0.5
 
 
 def sh(*args):
+    """Run a command and return its output, or "" if that did not work.
+
+    Decoded as UTF-8 and never allowed to fail on it. text=True on its own
+    decodes with the locale's encoding, which under Kodi is ASCII -- and this
+    reads window titles, which are somebody else's text. One title with an
+    accent or a non-breaking space in it was enough to take the launcher down
+    with a UnicodeDecodeError that said nothing about titles. A title we
+    cannot read should cost us that title, not the launch.
+    """
     try:
-        return subprocess.run(args, capture_output=True, text=True, timeout=15).stdout
+        return subprocess.run(args, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace",
+                              timeout=15).stdout
     except Exception:
         return ""
 

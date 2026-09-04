@@ -953,8 +953,13 @@ def game_running():
     display, so the sync defers rather than interrupting play.
     """
     try:
+        # UTF-8 rather than the locale's encoding, which under a service is
+        # ASCII: this reads every command line on the machine, and one game
+        # with an accent in its path would otherwise stop the sync.
         out = subprocess.run(["ps", "-eo", "stat,comm,args"],
-                             capture_output=True, text=True, timeout=20).stdout
+                             capture_output=True, text=True,
+                             encoding="utf-8", errors="replace",
+                             timeout=20).stdout
     except Exception:
         return False
     for line in out.splitlines()[1:]:
