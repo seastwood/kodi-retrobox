@@ -35,6 +35,12 @@ LAST_GAME = os.path.expanduser("~/.local/state/retroarch/last-game.json")
 RECENT = os.path.expanduser("~/.local/state/retroarch/recent.json")
 RECENT_MAX = 12
 FAVOURITES = os.path.expanduser("~/.local/share/gamefavourites.json")
+# Menu rows somebody has switched off, and the list of what can be switched
+# off. Both are written and read by kodi_menu.py, which is what actually
+# builds the menu; this screen only edits the first one.
+MENU_HIDDEN = os.path.expanduser("~/.config/retrobox-menu-hidden.json")
+MENU_ITEMS = os.path.expanduser("~/.local/state/menu-items.json")
+MENU_BUILDER = os.path.expanduser("~/.local/bin/kodi_menu.py")
 SHADER_DIR = os.path.expanduser("~/.local/share/retroarch/shaders")
 # A CRT filter on a television console looks right; on a handheld it is simply
 # wrong -- a Game Boy screen never had scanlines. Anything not listed gets the
@@ -972,6 +978,124 @@ def stop_stuck_game():
                                   xbmcgui.NOTIFICATION_INFO)
 
 
+def menu_items_screen():
+    """Switch home menu rows on and off.
+
+    Nobody needs every row. A console with no aerial has no use for TV, a
+    house with one PC has no use for Moonlight, and a menu full of things that
+    lead nowhere is worse than a short one -- especially from a sofa, where
+    every extra row is another press.
+
+    The list comes from kodi_menu.py's own catalogue rather than from the menu
+    on screen. A row that is switched off is not built at all, so a list made
+    from what is showing could never offer it back.
+    """
+    if not os.path.exists(MENU_ITEMS):
+        # Nothing has built the menu since this feature arrived. Build it now
+        # rather than showing an empty screen and calling it "no items".
+        progress = xbmcgui.DialogProgress()
+        progress.create("Menu items", "Looking at the menu...")
+        try:
+            subprocess.call([MENU_BUILDER])
+        except OSError:
+            pass
+        progress.close()
+
+    try:
+        with open(MENU_ITEMS) as fh:
+            items = json.load(fh).get("items", [])
+    except (OSError, ValueError):
+        items = []
+    if not items:
+        xbmcgui.Dialog().ok(
+            "Menu items",
+            "Could not read the list of menu items.\n\n"
+            "Run the game sync once and try again.")
+        return
+
+    changed = False
+    while True:
+        hidden = read_hidden_menu()
+        rows = []
+        for item in items:
+            if item.get("fixed"):
+                rows.append("%s   [COLOR grey]always on[/COLOR]"
+                            % item.get("label", "?"))
+            elif item.get("key") in hidden:
+                rows.append("%s   [COLOR grey]off[/COLOR]"
+                            % item.get("label", "?"))
+            else:
+                rows.append("%s   ON" % item.get("label", "?"))
+        rows.append("Close")
+
+        pick = xbmcgui.Dialog().select("Menu items", rows)
+        if pick < 0 or pick >= len(items):
+            break
+        item = items[pick]
+        label = item.get("label", "?")
+        if item.get("fixed"):
+            xbmcgui.Dialog().ok(
+                "Menu items",
+                "[B]%s[/B] cannot be switched off.\n\n"
+                "It is the way back to this screen." % label)
+            continue
+
+        key = item.get("key")
+        turning_off = key not in hidden
+        if turning_off:
+            ok = xbmcgui.Dialog().yesno(
+                "Menu items",
+                "Hide [B]%s[/B] from the home menu?\n\n"
+                "Nothing is deleted. It can be switched back on here at any "
+                "time." % label,
+                nolabel="Keep it", yeslabel="Hide it")
+        else:
+            ok = xbmcgui.Dialog().yesno(
+                "Menu items",
+                "Put [B]%s[/B] back on the home menu?" % label,
+                nolabel="Leave it off", yeslabel="Show it")
+        if not ok:
+            continue
+        if turning_off:
+            hidden.add(key)
+        else:
+            hidden.discard(key)
+        if write_hidden_menu(hidden):
+            changed = True
+
+    if changed:
+        # Rebuilding takes the best part of a minute and reloads the skin, so
+        # it happens once on the way out rather than after every choice.
+        progress = xbmcgui.DialogProgress()
+        progress.create("Menu items",
+                        "Rebuilding the menu.\n\nThe screen will flicker "
+                        "when the skin reloads.")
+        try:
+            subprocess.call([MENU_BUILDER])
+        except OSError:
+            pass
+        progress.close()
+
+
+def read_hidden_menu():
+    try:
+        with open(MENU_HIDDEN) as fh:
+            return set(json.load(fh).get("hidden", []))
+    except (OSError, ValueError):
+        return set()
+
+
+def write_hidden_menu(hidden):
+    try:
+        os.makedirs(os.path.dirname(MENU_HIDDEN), exist_ok=True)
+        with open(MENU_HIDDEN, "w") as fh:
+            json.dump({"hidden": sorted(hidden)}, fh, indent=2)
+    except OSError as err:
+        xbmcgui.Dialog().ok("Menu items", "Could not save: %s" % err)
+        return False
+    return True
+
+
 def settings_screen():
     """The handful of things about this console worth changing from the sofa.
 
@@ -984,6 +1108,7 @@ def settings_screen():
         rows = [
             "Start Kodi at login:  %s" % ("ON" if autostart_on() else "off"),
             "Restart Kodi if it crashes:  %s" % ("ON" if restart else "off"),
+            "Enable or disable menu items",
             "Run the game sync now",
             "Stop a game that will not close",
             "Update this console",
@@ -992,7 +1117,7 @@ def settings_screen():
             "Close",
         ]
         pick = xbmcgui.Dialog().select("Settings", rows)
-        if pick in (-1, 7):
+        if pick in (-1, 8):
             return
         if pick == 0:
             wanted = not autostart_on()
@@ -1013,17 +1138,19 @@ def settings_screen():
             except OSError:
                 pass
         elif pick == 2:
+            menu_items_screen()
+        elif pick == 3:
             sync_games_now()
             return
-        elif pick == 3:
-            stop_stuck_game()
         elif pick == 4:
+            stop_stuck_game()
+        elif pick == 5:
             update_system()
             return
-        elif pick == 5:
+        elif pick == 6:
             restore_backup()
             return
-        elif pick == 6:
+        elif pick == 7:
             # Otherwise the only way in is the S key, which a console with no
             # keyboard does not have.
             xbmc.executebuiltin("ActivateWindow(Settings)")

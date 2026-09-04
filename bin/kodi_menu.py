@@ -31,6 +31,27 @@ SHORT = {
 }
 
 
+# Menu items somebody has switched off, and the list of what can be switched
+# off at all. Nobody needs every row: a console with no television aerial has
+# no use for TV, and a house with one PC has no use for Moonlight. Kept out of
+# Kodi's own settings because this menu is built out here, before Kodi is
+# looking.
+HIDDEN = os.path.expanduser("~/.config/retrobox-menu-hidden.json")
+CATALOGUE = os.path.expanduser("~/.local/state/menu-items.json")
+
+# Settings is how somebody turns things back on. Hiding it would be a door
+# locked from the inside.
+ALWAYS = {"settings"}
+
+
+def hidden_keys():
+    try:
+        with open(HIDDEN) as fh:
+            return set(json.load(fh).get("hidden", []))
+    except (OSError, ValueError):
+        return set()
+
+
 def short(system):
     return SHORT.get(system, system.split(" - ")[-1].upper())
 
@@ -49,27 +70,48 @@ def sc(default_id, label, action, icon, label2="", props=None):
     return "".join(out)
 
 
+def offer(out, seen, key, default_id, label, action, icon, label2="",
+          props=None):
+    """Record a menu item, and add it unless somebody has switched it off.
+
+    `key` is what the switch is remembered against and is not the defaultID.
+    The consoles are numbered games-0, games-1 and so on in playlist order, so
+    adding one system renumbers every system after it -- and a preference
+    stored against the number would quietly start hiding a different console.
+    The key is the system's own name, which does not move.
+    """
+    seen.append({"key": key, "label": label, "hint": label2,
+                 "fixed": key in ALWAYS})
+    if key in ALWAYS or key not in hidden_keys():
+        out.append(sc(default_id, label, action, icon, label2, props))
+
+
 def build():
     out = ['<?xml version="1.0" encoding="UTF-8"?>\n<shortcuts>\n']
-    out.append(sc("movies", "MOVIES",
+    # Everything that could be on the menu, whether or not it is. The screen
+    # that switches these on and off reads this: an item that is switched off
+    # is not built, so a list made from the menu itself could never offer it
+    # back.
+    seen = []
+    offer(out, seen, "movies", "movies", "MOVIES",
                   "ActivateWindow(Videos,videodb://movies/titles/,return)",
                   SKINICON + "DefaultMovies.png",
                   props={"widgetPath": "videodb://recentlyaddedmovies/",
                          "widgetName": "RECENTLY ADDED", "widgetTitle": "RECENTLY ADDED",
                          "widgetType": "movies", "widgetArt": "Poster",
                          "widgetStyle": "Panel", "widgetTarget": "videos",
-                         "widgetLimit": "20"}))
-    out.append(sc("tvshows", "TV",
+                         "widgetLimit": "20"})
+    offer(out, seen, "tvshows", "tvshows", "TV",
                   "ActivateWindow(Videos,videodb://tvshows/titles/,return)",
                   SKINICON + "DefaultTVShows.png",
                   props={"widgetPath": "videodb://recentlyaddedepisodes/",
                          "widgetName": "RECENTLY ADDED", "widgetTitle": "RECENTLY ADDED",
                          "widgetType": "episodes", "widgetArt": "Thumb",
                          "widgetStyle": "Panel", "widgetTarget": "videos",
-                         "widgetLimit": "20"}))
-    out.append(sc("youtube", "YOUTUBE",
+                         "widgetLimit": "20"})
+    offer(out, seen, "youtube", "youtube", "YOUTUBE",
                   "ActivateWindow(Videos,plugin://plugin.video.youtube/,return)",
-                  SKINICON + "YouTube.png"))
+                  SKINICON + "YouTube.png")
 
     # Straight back into whatever was last played. The label stays generic
     # on purpose: this menu is only rebuilt when the game list changes, so a
@@ -78,9 +120,9 @@ def build():
         icon = os.path.join(ICON, "_continue.png")
         if not os.path.exists(icon):
             icon = SKINICON + "DefaultAddonGame.png"
-        out.append(sc("continue", "CONTINUE",
+        offer(out, seen, "continue", "continue", "CONTINUE",
                       "RunPlugin(plugin://plugin.program.retroarch/?resume=1)",
-                      icon, "LAST PLAYED"))
+                      icon, "LAST PLAYED")
 
     # Favourites and recently played, each only once there is something in it
     # -- an empty row on the home screen is worse than no row.
@@ -99,8 +141,8 @@ def build():
         if not os.path.exists(icon):
             icon = SKINICON + "DefaultAddonGame.png"
         url = "plugin://plugin.program.retroarch/?" + urlencode({ident: "1"})
-        out.append(sc(ident, label, "ActivateWindow(Games,%s,return)" % url,
-                      icon, "%d GAMES" % len(games)))
+        offer(out, seen, ident, ident, label, "ActivateWindow(Games,%s,return)" % url,
+                      icon, "%d GAMES" % len(games))
 
     n = 0
     for pl in sorted(glob.glob(os.path.join(PL, "*.lpl"))):
@@ -115,9 +157,9 @@ def build():
         icon = os.path.join(ICON, system + ".png")
         if not os.path.exists(icon):
             icon = SKINICON + "DefaultAddonGame.png"
-        out.append(sc("games-%d" % n, short(system),
+        offer(out, seen, "console:" + system, "games-%d" % n, short(system),
                       "ActivateWindow(Games,%s,return)" % url, icon,
-                      "%d GAMES" % len(items)))
+                      "%d GAMES" % len(items))
         n += 1
 
     # Every game that has a player count, browsable by how many people can
@@ -134,9 +176,9 @@ def build():
         if not os.path.exists(icon):
             icon = SKINICON + "DefaultAddonGame.png"
         url = "plugin://plugin.program.retroarch/?" + urlencode({"multiplayer": "1"})
-        out.append(sc("multiplayer", "MULTIPLAYER",
+        offer(out, seen, "multiplayer", "multiplayer", "MULTIPLAYER",
                       "ActivateWindow(Games,%s,return)" % url, icon,
-                      "%d GAMES" % known))
+                      "%d GAMES" % known)
 
     # Native PC games are grouped behind one entry rather than listed individually.
     try:
@@ -158,9 +200,9 @@ def build():
         if not os.path.exists(icon):
             icon = SKINICON + "DefaultAddonGame.png"
         url = "plugin://plugin.program.retroarch/?" + urlencode({"pcgames": "1"})
-        out.append(sc("pcgames", "PC GAMES",
+        offer(out, seen, "pcgames", "pcgames", "PC GAMES",
                       "ActivateWindow(Games,%s,return)" % url, icon,
-                      "%d GAMES" % len(pcs)))
+                      "%d GAMES" % len(pcs))
 
     # Steam (script.steam), next to PC GAMES because it is the other half of
     # the same shelf: the games that came from a shop rather than from a
@@ -171,8 +213,8 @@ def build():
         icon = os.path.join(ICON, "_steam.png")
         if not os.path.exists(icon):
             icon = SKINICON + "DefaultAddonGame.png"
-        out.append(sc("steam", "STEAM", "RunScript(script.steam)", icon,
-                      "BIG PICTURE"))
+        offer(out, seen, "steam", "steam", "STEAM", "RunScript(script.steam)", icon,
+                      "BIG PICTURE")
 
     # Moonlight (script.moonlight), beside Steam: both are somewhere else's
     # games played on this television, one from a shop and one from another
@@ -184,29 +226,29 @@ def build():
         icon = os.path.join(ICON, "_moonlight.png")
         if not os.path.exists(icon):
             icon = SKINICON + "DefaultAddonGame.png"
-        out.append(sc("moonlight", "MOONLIGHT", "RunScript(script.moonlight)",
-                      icon, "STREAM FROM A PC"))
+        offer(out, seen, "moonlight", "moonlight", "MOONLIGHT", "RunScript(script.moonlight)",
+                      icon, "STREAM FROM A PC")
 
     # Controller mapping editor for the PC games (script.joyshock). Sits next
     # to PC GAMES because that is the only thing it configures.
-    out.append(sc("controller", "CONTROLLER",
+    offer(out, seen, "controller", "controller", "CONTROLLER",
                   "RunScript(script.joyshock)",
                   SKINICON + "DefaultAddonPeripheral.png",
-                  "BUTTON MAPPING"))
+                  "BUTTON MAPPING")
 
     # Bluetooth pairing (script.bluetooth), beside the other two ways a
     # controller can arrive here.
     icon = os.path.join(ICON, "_bluetooth.png")
     if not os.path.exists(icon):
         icon = SKINICON + "DefaultAddonPeripheral.png"
-    out.append(sc("bluetooth", "BLUETOOTH",
-                  "RunScript(script.bluetooth)", icon, "PAIR A DEVICE"))
+    offer(out, seen, "bluetooth", "bluetooth", "BLUETOOTH",
+                  "RunScript(script.bluetooth)", icon, "PAIR A DEVICE")
 
     # USB/IP client (script.usbip): attach a controller shared by another box.
-    out.append(sc("usbdevices", "USB DEVICES",
+    offer(out, seen, "usbdevices", "usbdevices", "USB DEVICES",
                   "RunScript(script.usbip)",
                   SKINICON + "DefaultAddonPeripheral.png",
-                  "OVER THE NETWORK"))
+                  "OVER THE NETWORK")
 
     # Remote co-op (script.fourthplayer), beside the other ways a controller
     # gets here. Only when it is actually installed: this menu is regenerated
@@ -216,28 +258,37 @@ def build():
         icon = os.path.join(ICON, "_multiplayer.png")
         if not os.path.exists(icon):
             icon = SKINICON + "DefaultAddonProgram.png"
-        out.append(sc("fourthplayer", "FOURTH PLAYER",
+        offer(out, seen, "fourthplayer", "fourthplayer", "FOURTH PLAYER",
                       "RunScript(script.fourthplayer)", icon,
-                      "PLAY WITH FRIENDS"))
+                      "PLAY WITH FRIENDS")
 
-    out.append(sc("retroarch", "RETROARCH",
+    offer(out, seen, "retroarch", "retroarch", "RETROARCH",
                   "RunPlugin(plugin://plugin.program.retroarch/?open=1)",
-                  SKINICON + "DefaultAddonGame.png"))
+                  SKINICON + "DefaultAddonGame.png")
 
     # Settings belongs on the home menu, not behind PC GAMES: none of what it
     # controls is about PC games.
     icon = os.path.join(ICON, "_settings.png")
     if not os.path.exists(icon):
         icon = SKINICON + "DefaultAddonProgram.png"
-    out.append(sc("settings", "SETTINGS",
+    offer(out, seen, "settings", "settings", "SETTINGS",
                   "RunPlugin(plugin://plugin.program.retroarch/?%s)" % urlencode({"settings": "1"}),
-                  icon, "console options"))
+                  icon, "console options")
     out.append("</shortcuts>\n")
-    return "".join(out), n
+    return "".join(out), n, seen
 
 
 def main():
-    xml, consoles = build()
+    xml, consoles, seen = build()
+    # Written every rebuild, so the screen that switches items on and off is
+    # offering what this menu can actually contain today rather than a list
+    # somebody typed out once.
+    try:
+        os.makedirs(os.path.dirname(CATALOGUE), exist_ok=True)
+        with open(CATALOGUE, "w") as fh:
+            json.dump({"items": seen}, fh, indent=2)
+    except OSError:
+        pass
     dest = os.path.join(SS, "mainmenu.DATA.xml")
     old = open(dest).read() if os.path.exists(dest) else ""
     if old == xml:
