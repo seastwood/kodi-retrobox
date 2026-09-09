@@ -1,0 +1,100 @@
+#!/bin/sh
+# What this console is made of, and whether any of it is out of date.
+#
+#   bin/retrobox-check
+#
+# Read-only. It fetches, which needs the network, and changes nothing at all --
+# no sudo, no pulls, no restarts. Run it whenever you want to know whether
+# install/update.sh has anything to do.
+#
+# A kodi-retrobox is not one repository. It is this one plus Fourth Player plus
+# an add-on per project that is its own thing, and "is my console up to date"
+# is a question about all of them at once. Before this there was no way to ask
+# it short of running the whole installer and reading what scrolled past.
+#
+# The component list is read out of install.sh rather than written again here.
+# Two lists of the same thing drift the moment either is touched, and the one
+# that drifts silently is the one nobody runs.
+set -u
+
+REPO="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+HOME_DIR="${HOME:-$(cd ~ && pwd)}"
+INSTALL="$REPO/install/install.sh"
+
+bold()  { printf '\n\033[1m== %s\033[0m\n' "$*"; }
+ok()    { printf '   ok    %s\n' "$*"; }
+old()   { printf '   OLD   %s\n' "$*"; }
+warn()  { printf '   WARN  %s\n' "$*"; }
+
+BEHIND_ANY=0
+
+# name  path  [addon-id]
+look() {
+  name=$1; path=$2; addon=${3:-}
+  if [ ! -d "$path/.git" ]; then
+    warn "$name: not a git clone at $path, so it can never update"
+    BEHIND_ANY=1
+    return
+  fi
+  git -C "$path" fetch --quiet 2>/dev/null
+  here=$(git -C "$path" rev-parse --short HEAD 2>/dev/null)
+  behind=$(git -C "$path" rev-list --count HEAD..@{u} 2>/dev/null || echo 0)
+  ahead=$(git -C "$path" rev-list --count @{u}..HEAD 2>/dev/null || echo 0)
+  dirty=$(git -C "$path" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+
+  extra=""
+  [ "$ahead" != "0" ] && extra="$extra, $ahead not pushed"
+  [ "$dirty" != "0" ] && extra="$extra, $dirty file(s) changed here"
+
+  if [ "$behind" != "0" ]; then
+    old "$name $here -- $behind behind$extra"
+    BEHIND_ANY=1
+  else
+    ok "$name $here$extra"
+  fi
+
+  # An add-on that is not wired into Kodi updates and is never seen.
+  if [ -n "$addon" ] && [ ! -e "$HOME_DIR/.kodi/addons/$addon" ]; then
+    warn "  ...but $addon is not in ~/.kodi/addons, so Kodi does not have it"
+  fi
+}
+
+bold "This console"
+look "kodi-retrobox" "$REPO"
+
+bold "Fourth Player"
+look "fourth-player" "$HOME_DIR/fourth-player" "script.fourthplayer"
+
+bold "Add-ons kept in their own repositories"
+# The same list install.sh installs from, read from it so the two cannot
+# disagree about what a console is made of.
+if [ -r "$INSTALL" ]; then
+  # Through a file rather than a pipe. A `while` on the right of a pipe runs
+  # in a subshell, so everything it learned -- including whether anything is
+  # behind -- is thrown away when it ends, and the exit status would say all
+  # is well while the report above it said otherwise.
+  LIST=$(mktemp) || LIST=/tmp/retrobox-check.$$
+  sed -n '/^OUTSIDE_ADDONS=/,/"$/p' "$INSTALL" \
+    | sed 's/^OUTSIDE_ADDONS="//; s/"$//' > "$LIST"
+  while read -r id url; do
+    [ -n "${id:-}" ] || continue
+    # Either layout: cloned into .kodi/addons, or cloned beside this
+    # repository and linked in. Both have been shipped.
+    dst="$HOME_DIR/.kodi/addons/$id"
+    [ -d "$dst/.git" ] || dst=$(readlink -f "$dst" 2>/dev/null || echo "$dst")
+    look "$id" "$dst" "$id"
+  done < "$LIST"
+  rm -f "$LIST"
+else
+  warn "cannot read $INSTALL, so the add-on list is unknown"
+fi
+
+bold "What to do"
+if [ "$BEHIND_ANY" = 0 ]; then
+  echo "   Nothing is behind."
+else
+  echo "   Something is out of date. To bring it all up:"
+  echo "       $REPO/install/update.sh"
+fi
+echo "   (the exit status is 1 when anything is behind, for a script that asks)"
+exit "$BEHIND_ANY"

@@ -3,6 +3,14 @@
 #
 #   install/update.sh [install.sh flags...]
 #
+# To see whether it has anything to do first, without changing anything:
+#
+#   bin/retrobox-check
+#
+# A console is this repository plus Fourth Player plus an add-on per project
+# that is its own thing. This pulls this one and hands over to install.sh,
+# which pulls every other one -- so "update everything" is this one command.
+#
 # Your games, saves and settings are not in here -- they live in ~/Games,
 # ~/.local/share/retroarch and ~/.kodi -- so an update only ever touches the
 # definition.
