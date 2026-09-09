@@ -109,7 +109,19 @@ else
     if grep -rqs "launchpadcontent.net/${name}" /etc/apt/sources.list.d/ 2>/dev/null; then
       skip "PPA already present: $name"
     else
-      run "sudo add-apt-repository -y ppa:$name" || warn "could not add ppa:$name"
+      # Twice, with a pause. add-apt-repository fetches the signing key from
+      # launchpad.net with a ten-second timeout, and a read timing out there
+      # is the ordinary weather of the internet rather than a fault worth
+      # stopping for. Losing it is not cheap either: without this PPA there is
+      # no libretro database, so RetroArch scans a folder of games and
+      # recognises none of them -- which arrives much later, as a working
+      # install that finds nothing.
+      if ! run "sudo add-apt-repository -y ppa:$name"; then
+        warn "could not add ppa:$name -- trying once more"
+        sleep 5
+        run "sudo add-apt-repository -y ppa:$name" ||
+          warn "still could not add ppa:$name; run install.sh again when the network is willing"
+      fi
     fi
   done < "$REPO/system/ppas.txt"
   run "sudo apt-get update -qq"
