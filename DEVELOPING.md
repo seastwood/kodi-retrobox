@@ -43,7 +43,7 @@ stranger start from it.
 
     tests/   →  run any of them with python3
 
-429 checks across twenty suites: button mapping, the player picker, the sync
+550 checks across 22 suites: button mapping, the player picker, the sync
 pipeline, the config guard, the hold-to-exit feedback, the Bluetooth setting a
 Switch Pro Controller needs, and carrying a game across a re-pick. They use synthetic devices and fake ROM trees, so they touch
 nothing real. `install.sh` runs the lot as its last phase. Bluetooth pairing
@@ -73,8 +73,18 @@ A ninth turned up later: `/usr/bin/usbip` is a wrapper script that exits 2 when
 the tools for the running kernel are missing, so every check that looked for
 the file passed while usbip did nothing.
 
-What remains untested is a controller: the virtual machine has no pads, so the
-player picker and the hold-to-exit bar are proven only on the original machine.
+Later, the same thing again on real hardware rather than a virtual machine --
+a wiped Linux Mint 22.3 desktop with different silicon -- and it found six
+more, every one of them invisible on the machine this grew up on: a question
+asked through a pipe that nobody could see and that waited for ever; the same
+question asked again after a fix that tested the wrong stream; a phase that
+worked only when run from inside its own checkout; bluetoothctl waiting for
+ever on a machine with no Bluetooth adapter; H.264 reported as unavailable
+because x264enc is in gstreamer's ugly set and a Mint desktop installs bad;
+and a login-screen hook that granted access to a hardcoded username.
+
+What remains untested is a controller: neither test machine had pads, so the
+player picker and the hold-to-exit bar are proven only on the original one.
 
 ## Hardware it grew up on
 

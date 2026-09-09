@@ -116,7 +116,13 @@ the same short list when it finishes.
 
 ## Updating
 
-    ~/retrobox/install/update.sh
+    ~/retrobox/bin/retrobox-check     # is there anything to do?
+    ~/retrobox/install/update.sh      # do it
+
+The check fetches and reports and changes nothing: no sudo, no pulls, no
+restarts. A console is this repository plus Fourth Player plus an add-on per
+project that is its own thing, so "is it up to date" is a question about all
+of them at once, and this is how to ask it.
 
 That is the whole update: it stashes anything uncommitted, pulls, and runs
 `install.sh` for you. `install.sh` is idempotent, so the second run only
