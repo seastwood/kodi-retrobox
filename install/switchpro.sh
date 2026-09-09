@@ -148,7 +148,16 @@ if ! command -v bluetoothctl >/dev/null 2>&1; then
   exit "$FAILED"
 fi
 
-alias_now() { bluetoothctl show 2>/dev/null | sed -n 's/^[[:space:]]*Alias:[[:space:]]*//p' | head -1; }
+# Time-bounded, and that is the whole of it. With no adapter present --
+# and no bluetoothd running to say so -- "bluetoothctl show" does not fail
+# and does not return: it waits, for ever. The branch below already knows what
+# to do about a machine with no Bluetooth, and never got the chance to,
+# because asking the question was what hung. Found on a desktop with no
+# Bluetooth at all, where it stopped a whole install dead with nothing said.
+alias_now() {
+  timeout 5 bluetoothctl show 2>/dev/null \
+    | sed -n 's/^[[:space:]]*Alias:[[:space:]]*//p' | head -1
+}
 
 if [ -z "$(alias_now)" ]; then
   echo "no Bluetooth adapter here; nothing to name" >&2
