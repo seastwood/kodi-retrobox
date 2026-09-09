@@ -52,3 +52,8 @@ unzip
 # somebody has just built. Mint ships it, Ubuntu does not always, and neither
 # is a thing to depend on.
 flatpak
+# x264enc lives here, and nothing else provides it. A Mint desktop
+# installs the "bad" set and not this one, so without it a machine
+# encodes H.265 and reports that it cannot do H.264 -- which is the one
+# every browser takes.
+gstreamer1.0-plugins-ugly
