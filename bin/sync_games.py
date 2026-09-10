@@ -54,6 +54,10 @@ CORES = {
     "Nintendo - Nintendo Entertainment System": "fceumm_libretro",
 }
 
+# system name -> the folder under ~/Games/emulation its games live in.
+SYSTEM_FOLDER = {}
+
+
 def load_systems():
     """Add every other system RetroArch can run to CORES.
 
@@ -70,6 +74,10 @@ def load_systems():
                 parts = line.rstrip("\n").split("\t")
                 if len(parts) == 3:
                     CORES.setdefault(parts[1], parts[2])
+                    # And which folder that system's games sit in, which is
+                    # what lets a playlist be made for a folder the scanner
+                    # could not identify anything in.
+                    SYSTEM_FOLDER.setdefault(parts[1], parts[0])
     except OSError:
         pass                              # the built-in nine still work
 
@@ -371,10 +379,60 @@ def fill_gaps():
             added.append("%s +%d" % (system, len(fresh)))
             for item in fresh:
                 log("  added: %s / %s" % (system, item["label"]))
+    # Folders with games in them and no playlist at all.
+    #
+    # Everything above adds files the scanner missed to a playlist the scanner
+    # made. That is no help when the scanner made nothing, which is what
+    # happens when it cannot identify a single file in the folder -- and there
+    # are whole systems like that. A GameCube .ciso begins with "CISO" rather
+    # than a disc header, so RetroArch reads no game id, looks nothing up, and
+    # writes no playlist; the Dolphin core plays them perfectly well. Twenty
+    # GameCube games sat on disk and never appeared, and the only complaint
+    # was a line in a log suggesting a script be edited.
+    folder_system = {v: k for k, v in SYSTEM_FOLDER.items()}
     for entry in sorted(os.listdir(ROMS)):
-        if os.path.isdir(os.path.join(ROMS, entry)) and entry not in covered:
+        path = os.path.join(ROMS, entry)
+        if not os.path.isdir(path) or entry in covered:
+            continue
+        system = folder_system.get(entry)
+        core = CORES.get(system) if system else None
+        if not core:
             log("  no playlist covers %s/ - add the system to CORES in this "
                 "script and SHORT in kodi_menu.py" % entry)
+            continue
+        exts = core_extensions(core)
+        if not exts:
+            continue
+        found = []
+        for dirpath, _dirs, files in os.walk(path):
+            if not_a_game_folder(dirpath):
+                continue
+            found.extend(launchable(dirpath, files, exts, True))
+        if not found:
+            continue                      # an empty folder is not a problem
+        so = os.path.join(COREDIR, core + ".so")
+        if not os.path.exists(so) and not ensure_core(core):
+            log("  %s has games but its core is missing: %s.so" % (entry, core))
+            continue
+        name = display_name(core)
+        items = [{
+            "path": path_,
+            "label": stem,
+            "core_path": so,
+            "core_name": name,
+            "crc32": "00000000|crc",
+            "db_name": system + ".lpl",
+        } for stem, path_ in sorted(found)]
+        pl = os.path.join(PLDIR, system + ".lpl")
+        json.dump({"version": "1.5", "default_core_path": so,
+                   "default_core_name": name, "label_display_mode": 0,
+                   "right_thumbnail_mode": 0, "left_thumbnail_mode": 0,
+                   "sort_mode": 0, "items": items},
+                  open(pl, "w"), indent=2)
+        covered.add(entry)
+        added.append("%s +%d" % (system, len(items)))
+        log("  made a playlist for %s (%d games the scanner could not "
+            "identify)" % (system, len(items)))
     return added
 
 
