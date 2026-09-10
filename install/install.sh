@@ -627,7 +627,48 @@ elif [ "$TARGET_HOME" != "$HOME" ]; then
   skip "not configuring Kodi (installing into $TARGET_HOME)"
 elif [ -x "$HERE/kodi-setup.sh" ]; then
   if pgrep -x kodi.bin >/dev/null 2>&1; then
-    warn "Kodi is running; quit it and run install/kodi-setup.sh"
+    # Kodi holds its add-on database open, and kodi-setup.sh edits it, so this
+    # cannot run while Kodi is up. It used to warn and leave it for somebody to
+    # do by hand -- which on a console that starts Kodi at login means never,
+    # so every real install ended with no skin, no boot screen, and every
+    # add-on waiting to be approved one at a time on the television.
+    #
+    # So take the screen the way a game does. The autostart wrapper waits
+    # while the hold file names a living process and puts Kodi back when it is
+    # gone, which also means an installer that dies here does not strand the
+    # television on a desktop.
+    HOLD="$HOME/.local/state/kodi-hold"
+    mkdir -p "$(dirname "$HOLD")"
+    echo $$ > "$HOLD"
+    ok "stopping Kodi for a moment; it comes back by itself"
+    pkill -x kodi.bin 2>/dev/null
+    waited=0
+    while pgrep -x kodi.bin >/dev/null 2>&1 && [ "$waited" -lt 30 ]; do
+      sleep 1; waited=$((waited+1))
+    done
+    if pgrep -x kodi.bin >/dev/null 2>&1; then
+      warn "Kodi would not quit; run install/kodi-setup.sh once it is closed"
+      rm -f "$HOLD"
+    else
+      "$HERE/kodi-setup.sh" 2>&1 | sed 's/^/  /'
+      rm -f "$HOLD"
+      # The wrapper brings it back when the hold goes -- unless Kodi exited
+      # cleanly enough that the wrapper stopped looping, in which case start
+      # it again here. The script refuses to start a second one, so asking
+      # twice is safe and asking neither time is a television left on a
+      # desktop.
+      back=0
+      while [ "$back" -lt 25 ]; do
+        pgrep -x kodi.bin >/dev/null 2>&1 && break
+        sleep 1; back=$((back+1))
+      done
+      if ! pgrep -x kodi.bin >/dev/null 2>&1          && [ -x "$TARGET_HOME/.local/bin/kodi-autostart.sh" ]; then
+        setsid "$TARGET_HOME/.local/bin/kodi-autostart.sh" >/dev/null 2>&1 &
+        ok "Kodi configured, and started again"
+      else
+        ok "Kodi configured, and it came back on its own"
+      fi
+    fi
   else
     "$HERE/kodi-setup.sh" 2>&1 | sed 's/^/  /'
   fi
