@@ -57,3 +57,17 @@ flatpak
 # encodes H.265 and reports that it cannot do H.264 -- which is the one
 # every browser takes.
 gstreamer1.0-plugins-ugly
+
+# Hardware video encoding, for whatever GPU the machine turns out to have.
+# Fourth Player encodes the screen once for every guest, and doing that on the
+# CPU is not merely slower: 1080p in software took one of these machines to
+# load average fifty and held it there, with no ssh, until somebody reached
+# the power button.
+#
+# va-driver-all pulls the right VA-API driver for the card that is present --
+# mesa for AMD, intel-media or i965 for Intel -- so this does not have to know
+# which one it is. plugins-bad is where the vah264enc and nvh264enc elements
+# live. vainfo is how you find out what a strange machine can actually do.
+va-driver-all
+gstreamer1.0-plugins-bad
+vainfo
