@@ -196,6 +196,26 @@ only asks for sudo when the file actually needs changing. It restarts
 `bluetooth` when it changes something, which drops whatever pad is connected
 at that moment.
 
+### Whether it can play what is actually here
+
+`bin/retrobox-ready` asks a different question from `retrobox-check`. That one
+says whether every component is up to date; this one says whether the games on
+this machine can actually start. It is read-only, it runs at the end of an
+install, and it reports three things:
+
+* **A system with games and no BIOS.** Nothing says so until somebody sits
+  down to play, and the message that does say so is on the television, where
+  whoever installed this is not looking. Two machines here had 32X games that
+  could never have run.
+* **A system with games and no core.** The same fault one layer down.
+* **A setting the launcher depends on.** The worst of the three, because
+  nothing fails: the game runs, and only the parts built around it stop
+  working. `log_verbosity` off meant repicking player slots silently restarted
+  the game from the beginning.
+
+It only ever asks about systems there are games for, so a console with no
+Saturn discs is never told about the Saturn BIOS.
+
 ### The screen never blanks, and never asks for a password
 
 LightDM logs this user straight in, so a console that is switched on arrives

@@ -1,0 +1,189 @@
+#!/usr/bin/env python3
+"""Whether this machine will actually play what is on it.
+
+retrobox-check answers "is every component up to date". This answers a
+different question, and the one that turns out to matter more: given the games
+that are actually here, is anything missing that will only be discovered by
+somebody sitting down to play?
+
+Everything it looks for is something that has silently failed on a real
+machine here:
+
+  * A system with games and no BIOS. Nothing says so until a game refuses to
+    start, and the message that does say so is on the television, where
+    whoever installed this is not looking. 32X games sat unplayable on two
+    machines because three files were in a folder nobody thought to check.
+
+  * A system with games and no core. The same shape of fault, one layer down.
+
+  * RetroArch settings the launcher depends on. These are the worst of the
+    three, because nothing fails: the game runs, and only the parts built
+    around it quietly stop working. log_verbosity off meant repicking player
+    slots restarted the game from the beginning, for months, on a machine
+    where everything else was right.
+
+Read-only. It changes nothing and says what to do about what it finds.
+"""
+import os
+import sys
+
+HOME = os.path.expanduser("~")
+REPO = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+GAMES = os.path.join(HOME, "Games", "emulation")
+SYSTEM = os.path.join(HOME, ".local", "share", "retroarch", "system")
+CORES = os.path.join(HOME, ".local", "lib", "retroarch", "cores")
+RA_CFG = os.path.join(HOME, ".config", "retroarch", "retroarch.cfg")
+
+BOLD, DIM, OFF = "\033[1m", "\033[2m", "\033[0m"
+problems = []
+notes = []
+
+
+def say(title):
+    print("\n%s== %s%s" % (BOLD, title, OFF))
+
+
+def ok(msg):
+    print("   ok    %s" % msg)
+
+
+def bad(msg):
+    print("   MISS  %s" % msg)
+    problems.append(msg)
+
+
+def note(msg):
+    print("   %s--    %s%s" % (DIM, msg, OFF))
+    notes.append(msg)
+
+
+def rows(path):
+    """Lines of a tab-separated table, comments and blanks dropped."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            for line in handle:
+                line = line.rstrip("\n")
+                if not line.strip() or line.lstrip().startswith("#"):
+                    continue
+                yield line.split("\t")
+    except OSError:
+        return
+
+
+def has_games(folder):
+    """Whether a ROM folder holds anything at all worth calling a game.
+
+    Counted by walking rather than by listing: every one of these folders here
+    has its games one directory down, in a folder per title.
+    """
+    where = os.path.join(GAMES, folder)
+    for _dirpath, _dirs, files in os.walk(where):
+        for name in files:
+            # The stray text files that come with a download are not games,
+            # and neither is a folder that holds only those.
+            if not name.lower().endswith((".txt", ".nfo", ".jpg", ".png",
+                                          ".xml", ".sbi", ".cue")):
+                return True
+    return False
+
+
+say("Games that cannot start for want of a BIOS")
+wanted = list(rows(os.path.join(REPO, "system", "bios.tsv")))
+looked = 0
+for row in wanted:
+    if len(row) < 3:
+        continue
+    folder, rule, files = row[0], row[1].strip(), row[2]
+    if not has_games(folder):
+        continue
+    looked += 1
+    names = [f.strip() for f in files.split(",") if f.strip()]
+    there = [n for n in names if os.path.exists(os.path.join(SYSTEM, n))]
+    if rule == "any":
+        if there:
+            ok("%s: %s" % (folder, ", ".join(os.path.basename(n) for n in there)))
+        else:
+            bad("%s has games and none of its BIOS: %s"
+                % (folder, " or ".join(names)))
+    else:
+        missing = [n for n in names if n not in there]
+        if missing:
+            bad("%s has games and is missing %s"
+                % (folder, ", ".join(missing)))
+        else:
+            ok("%s: %s" % (folder, ", ".join(os.path.basename(n) for n in names)))
+if not looked:
+    note("no games yet for any system that needs one")
+
+say("Games that cannot start for want of a core")
+missing_cores = 0
+for row in rows(os.path.join(REPO, "system", "systems.tsv")):
+    if len(row) < 3:
+        continue
+    folder, _name, core = row[0], row[1], row[2].strip()
+    if not core or not has_games(folder):
+        continue
+    if not os.path.exists(os.path.join(CORES, core + ".so")):
+        bad("%s has games and no %s" % (folder, core))
+        missing_cores += 1
+if not missing_cores:
+    ok("every system with games has the core it needs")
+
+say("Settings the launcher depends on")
+# Read from the live file rather than the template: the template says what a
+# fresh install gets, and this machine may be older than the template.
+live = {}
+for row in rows(RA_CFG):
+    line = row[0]
+    key, _, value = line.partition("=")
+    live[key.strip()] = value.strip().strip('"')
+
+NEEDED = [
+    ("log_verbosity", "true",
+     "ra_players.py waits for RetroArch to print that its command interface "
+     "is up, and RetroArch prints nothing at INFO without this -- so "
+     "repicking player slots restarts the game from the beginning instead of "
+     "carrying on"),
+    ("log_to_file", "false",
+     "the launcher captures stdout; a RetroArch logging to its own file says "
+     "nothing into it"),
+    ("network_cmd_enable", "true",
+     "without it, nothing can ask a running game to save or load a state"),
+    ("savestate_auto_save", "true", "closing a game writes where you got to"),
+    ("savestate_auto_load", "true", "and opening it reads that back"),
+    ("config_save_on_exit", "false",
+     "on, a game writes its one-launch settings permanently into "
+     "retroarch.cfg -- which is how one fresh start once turned off saving "
+     "for every game afterwards"),
+]
+for key, want, why in NEEDED:
+    got = live.get(key)
+    if got == want:
+        ok("%s = %s" % (key, got))
+    else:
+        bad("%s is %s, should be %s -- %s"
+            % (key, got if got is not None else "unset", want, why))
+
+level = live.get("frontend_log_level")
+try:
+    fine = level is not None and int(level) <= 1
+except ValueError:
+    fine = False
+if fine:
+    ok("frontend_log_level = %s" % level)
+else:
+    bad("frontend_log_level is %s, should be 0 or 1 -- INFO lines are what "
+        "the launcher reads" % (level if level is not None else "unset"))
+
+say("What to do")
+if problems:
+    print("   %d thing(s) to put right." % len(problems))
+    print("   Settings: install/install.sh applies the whole template again,")
+    print("   and changes nothing else.")
+    print("   BIOS: put the files in %s"
+          % SYSTEM.replace(HOME, "~"))
+    print("   Cores: install/install.sh fetches whatever is missing.")
+else:
+    print("   Nothing missing. Everything here has what it needs to run.")
+
+sys.exit(1 if problems else 0)

@@ -1,0 +1,27 @@
+# Which BIOS files a system needs, by ROM folder. Machine-readable companion
+# to bios-required.txt, which is the prose version and says the same things.
+#
+#   folder <TAB> any|all <TAB> comma-separated filenames
+#
+# "any" means one of them is enough -- the Sega CD wants the BIOS for the
+# region of the disc, and somebody with only American discs needs only the
+# American one. "all" means every file listed.
+#
+# Only systems that cannot run without one are here. Everything else --  NES,
+# SNES, Mega Drive cartridges, Nintendo 64, Master System, Game Gear, the
+# Ataris, most home computers -- needs nothing.
+#
+# retrobox-ready reads this and says which of these you actually need, which
+# is only ever the ones you have games for.
+sega-cd	any	bios_CD_U.bin,bios_CD_E.bin,bios_CD_J.bin
+sega-32x	all	32X_G_BIOS.BIN,32X_M_BIOS.BIN,32X_S_BIOS.BIN
+saturn	any	sega_101.bin,mpr-17933.bin
+dreamcast	all	dc/dc_boot.bin,dc/dc_flash.bin
+playstation	any	scph5500.bin,scph5501.bin,scph5502.bin
+pc-engine-cd	all	syscard3.pce
+3do	any	panafz1.bin
+lynx	all	lynxboot.img
+famicom-disk	all	disksys.rom
+amiga	any	kick34005.A500.rom,kick40068.A1200.rom,kick40063.A600.rom
+msx	all	MSX.ROM
+msx2	all	MSX2.ROM

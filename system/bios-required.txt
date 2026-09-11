@@ -17,6 +17,9 @@ Sega CD / Mega-CD             bios_CD_U.bin            required (USA discs)
                               bios_CD_J.bin            required (Japanese)
 Sega Saturn                   sega_101.bin             required
                               mpr-17933.bin            required (alternative)
+Sega 32X                      32X_G_BIOS.BIN           required (all three)
+                              32X_M_BIOS.BIN           required
+                              32X_S_BIOS.BIN           required
 Sega Dreamcast                dc_boot.bin              required
                               dc_flash.bin             required
 Sony PlayStation              scph5500.bin             required (Japan)
@@ -27,6 +30,8 @@ PC Engine CD / TurboGrafx-CD  syscard3.pce             required
 Atari Lynx                    lynxboot.img             required
 Famicom Disk System           disksys.rom              required
 Commodore Amiga               kick34005.A500.rom       required (per model)
+                              kick40063.A600.rom       required (A600)
+                              kick40068.A1200.rom      required (A1200)
 Neo Geo                       neogeo.zip               required (in the ROM folder)
 MSX / MSX2                    MSX.ROM, MSX2.ROM        required
 Sega Mega Drive               bios_MD.bin              optional TMSS boot ROM,

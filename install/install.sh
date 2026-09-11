@@ -714,6 +714,20 @@ else
   fi
 fi
 
+# --------------------------------------------------------------- readiness --
+say "Whether it can play what is here"
+# The suites above test the code. This tests the machine: a system with games
+# and no BIOS, a system with games and no core, a setting the launcher leans
+# on. None of those fail at install time -- they fail weeks later, on the
+# television, in front of somebody who wanted to play something.
+if [ "$DRY" = 1 ]; then
+  skip "would check the BIOS, cores and settings against the games that are here"
+elif [ -x "$HERE/../bin/retrobox-ready" ]; then
+  "$HERE/../bin/retrobox-ready" 2>&1 | sed 's/^/   /' || true
+else
+  warn "bin/retrobox-ready is missing"
+fi
+
 # ------------------------------------------------------------------- notes --
 say "What is left to do"
 cat <<'EOF'
