@@ -466,6 +466,22 @@ else
   [ "${PIPESTATUS[0]}" = 0 ] || warn "the Pro Controller settings did not all apply"
 fi
 
+# ------------------------------------------------------------- no blanking --
+say "Keeping the television awake"
+# A console that blanks its own screen after ten minutes and then asks for a
+# password looks, from the sofa, exactly like one that has crashed.
+if [ ! -x "$HERE/noblank.sh" ]; then
+  warn "noblank.sh is missing; the screen will blank and lock on its own"
+elif [ "$DRY" = 1 ]; then
+  "$HERE/noblank.sh" --dry-run 2>&1 | sed 's/^/   --    /'
+elif [ "$TARGET_HOME" != "$HOME" ]; then
+  # The autostart entries belong in the home being installed into; the running
+  # session does not, because it is not that user's.
+  "$HERE/noblank.sh" --home "$TARGET_HOME" 2>&1 | sed 's/^/   /'
+else
+  "$HERE/noblank.sh" 2>&1 | sed 's/^/   /'
+fi
+
 # --------------------------------------------------------------- autostart --
 say "Starting Kodi at login"
 # Without this a freshly built machine boots to a desktop and the television

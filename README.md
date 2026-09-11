@@ -196,6 +196,32 @@ only asks for sudo when the file actually needs changing. It restarts
 `bluetooth` when it changes something, which drops whatever pad is connected
 at that moment.
 
+### The screen never blanks, and never asks for a password
+
+LightDM logs this user straight in, so a console that is switched on arrives
+at Kodi with nothing asked of it. Staying there takes more, because four
+separate things want to blank the screen and two of them then want a password
+that only a keyboard can give:
+
+* **light-locker**, started for every session out of `/etc/xdg/autostart`. It
+  is what turns a blank screen into a locked one.
+* **xfce4-power-manager**, which stands the monitor by after ten minutes and
+  switches it off after fifteen.
+* **The X server's own screen saver**, ten minutes, independently of both.
+* **xscreensaver**, if it is ever installed.
+
+`install/noblank.sh` is that phase on its own and needs no root: the locker
+and xscreensaver get `Hidden=true` autostart entries of this user's own,
+xfce4-power-manager is told to leave the monitor alone, and an autostart entry
+runs `xset s off -dpms s noblank` at every login — `xset` asks the running X
+server and the next one knows nothing about it, so it has to be asked again
+each time. It also applies all of it to the session that is running, so it
+does not wait for a reboot to be true.
+
+A television switched off by DPMS looks exactly like a machine that has
+crashed, which is how this arrives when it is reported: *the screen goes
+black*.
+
 ### USB over IP
 
 The USB DEVICES entry borrows a controller plugged into another machine (a Pi,
