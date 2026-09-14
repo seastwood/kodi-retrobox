@@ -1236,27 +1236,12 @@ def handle_event(p, event, pads, slots):
             step += {"up": -1, "down": 1}.get(action, 0) * per_row
             step_cursor(p, pads, slots, step)
     elif event.type == evdev.ecodes.EV_ABS:
-        move = row = 0
-        if event.code == evdev.ecodes.ABS_HAT0X:
-            move = event.value
-        elif event.code == evdev.ecodes.ABS_X:
-            if event.value < -DEADZONE:
-                move = -1
-            elif event.value > DEADZONE:
-                move = 1
-        elif event.code == evdev.ecodes.ABS_HAT0Y:
-            row = event.value
-        elif event.code == evdev.ecodes.ABS_Y:
-            if event.value < -DEADZONE:
-                row = -1
-            elif event.value > DEADZONE:
-                row = 1
-        step = move + row * per_row
-        if step and p.axis_latch != (move or row) and p.slot is None:
+        # The latch is kept whatever happens, including for a pad that has
+        # already claimed a slot: letting go while claimed must still register,
+        # or the first push after releasing the slot would be swallowed.
+        step = axis_step(p, event, per_row)
+        if step and p.slot is None:
             step_cursor(p, pads, slots, step)
-        if event.code in (evdev.ecodes.ABS_HAT0X, evdev.ecodes.ABS_X,
-                          evdev.ecodes.ABS_HAT0Y, evdev.ecodes.ABS_Y):
-            p.axis_latch = move or row
     return None, None
 
 
@@ -1583,7 +1568,7 @@ class Pad:
         self.display = guest_names().get(dev.name, dev.name)
         self.cursor = cursor
         self.slot = None             # claimed player slot (0-based)
-        self.axis_latch = 0          # debounce for stick/dpad movement
+        self.axis_latch = {}         # per axis: which way it is pushed
         # Whether anybody has actually touched this pad. A Fourth Player
         # session creates a virtual pad per guest slot whether or not anyone is
         # holding one, so "is everybody ready?" has to mean the pads somebody
@@ -1609,6 +1594,48 @@ def load_fonts():
             return pygame.font.Font(PIXEL_FONT, size)
         return pygame.font.Font(None, int(size * 2.1))
     return {"big": f(44), "small": f(20), "tiny": f(13)}
+
+
+# How far a stick has to fall back before it counts as released. Lower than
+# DEADZONE deliberately: with one threshold for both edges, a stick resting
+# near it wanders across and back and fires a step per wobble.
+AXIS_RELEASE = DEADZONE * 2 // 3
+
+
+def axis_step(p, event, per_row):
+    """How far this stick or hat movement should carry the cursor. 0 for none.
+
+    One latch per axis, which is the whole of the fix.
+
+    There was a single `p.axis_latch` for all four axes, written on every
+    EV_ABS event as `move or row`. A stick does not rest at exactly zero and
+    does not report its axes together: held right, it emits a stream of ABS_X
+    well past the deadzone with ABS_Y events near zero interleaved through it.
+    Each of those ABS_Y events read as "no direction" and cleared the latch,
+    so the very next ABS_X -- same stick, same direction, never released --
+    looked like a fresh push and stepped the cursor again. One flick walked
+    across several slots, which is what made a particular slot hard to land
+    on.
+
+    A d-pad never showed it. A hat reports -1, 0 or 1 and only when it
+    changes, so there was nothing to interleave, and the bug belonged to the
+    analogue sticks alone.
+    """
+    e = evdev.ecodes
+    reach = {e.ABS_HAT0X: 1, e.ABS_X: 1,
+             e.ABS_HAT0Y: per_row, e.ABS_Y: per_row}.get(event.code)
+    if reach is None:
+        return 0
+    held = p.axis_latch.get(event.code, 0)
+    if event.code in (e.ABS_HAT0X, e.ABS_HAT0Y):
+        way = (event.value > 0) - (event.value < 0)
+    else:
+        # Further to push than to let go, so the boundary cannot chatter.
+        edge = AXIS_RELEASE if held else DEADZONE
+        way = (event.value > edge) - (event.value < -edge)
+    p.axis_latch[event.code] = way
+    # Only a change counts. Holding a direction moves one slot and waits.
+    return 0 if way == held else way * reach
 
 
 def axis_direction(p, event):

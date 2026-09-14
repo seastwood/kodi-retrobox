@@ -116,19 +116,94 @@ check(launch, "START launches once someone is ready")
 print("-- and moves across a board of eight --")
 p = pad(0)
 p.slot, p.cursor = None, 0
-m.handle_event(p, Event(e.EV_ABS, e.ABS_HAT0X, 1), [p], 8)
+
+
+def push(pad_, code, value, slots=8):
+    m.handle_event(pad_, Event(e.EV_ABS, code, value), [pad_], slots)
+
+
+def tap(pad_, code, value, slots=8):
+    """A direction pushed and let go, which is what a hat really sends."""
+    push(pad_, code, value, slots)
+    push(pad_, code, 0, slots)
+
+
+# Released by sending the release, rather than by reaching in and clearing
+# the latch. The old version of this test did the latter, and the poke is
+# what hid the bug the next block is about.
+tap(p, e.ABS_HAT0X, 1)
 check(p.cursor == 1, "right moves one, got %r" % p.cursor)
-p.axis_latch = 0
-m.handle_event(p, Event(e.EV_ABS, e.ABS_HAT0Y, 1), [p], 8)
+tap(p, e.ABS_HAT0Y, 1)
 check(p.cursor == 5, "down moves a whole row, got %r" % p.cursor)
-p.axis_latch = 0
-m.handle_event(p, Event(e.EV_ABS, e.ABS_HAT0Y, 1), [p], 8)
+tap(p, e.ABS_HAT0Y, 1)
 check(p.cursor == 7, "down again stops at the end, got %r" % p.cursor)
-p.axis_latch = 0
 for _ in range(20):
-    p.axis_latch = 0
-    m.handle_event(p, Event(e.EV_ABS, e.ABS_HAT0X, -1), [p], 8)
+    tap(p, e.ABS_HAT0X, -1)
 check(p.cursor == 0, "left stops at the start, got %r" % p.cursor)
+
+print("-- a stick held one way moves one slot, not several --")
+# Reported as: "when using the joystick to select a different player, it is
+# really sensitive and moves more than one player over".
+#
+# What a real stick puts on the wire, which is the point of this test: the
+# axis being pushed reports far past the deadzone over and over, and the axis
+# that is merely near centre reports its own small readings in between. There
+# used to be one latch for all four axes, so each of those small ABS_Y
+# readings cleared it and the next ABS_X -- the same thumb, never lifted --
+# counted as a fresh push. Eight repeats moved eight slots.
+p = pad(0)
+p.slot, p.cursor = None, 0
+for _ in range(8):
+    push(p, e.ABS_X, 30000)
+    push(p, e.ABS_Y, 400)
+check(p.cursor == 1, "held right moves exactly one slot, got %r" % p.cursor)
+
+push(p, e.ABS_X, 0)
+push(p, e.ABS_X, 30000)
+check(p.cursor == 2, "letting go and pushing again moves another, got %r"
+      % p.cursor)
+
+print("-- and a stick resting on the edge does not creep --")
+p = pad(0)
+p.slot, p.cursor = None, 0
+push(p, e.ABS_X, m.DEADZONE + 200)
+check(p.cursor == 1, "over the line moves one, got %r" % p.cursor)
+# A thumb resting there wanders either side of the threshold. With one
+# edge for both directions each wobble is a release and a fresh push;
+# AXIS_RELEASE sits lower down, so it takes a real let-go to re-arm.
+for _ in range(6):
+    push(p, e.ABS_X, m.DEADZONE - 200)
+    push(p, e.ABS_X, m.DEADZONE + 300)
+check(p.cursor == 1, "and wobbling on the line moves no further, got %r"
+      % p.cursor)
+push(p, e.ABS_X, 0)
+push(p, e.ABS_X, 30000)
+check(p.cursor == 2, "but a real release still re-arms it, got %r" % p.cursor)
+
+print("-- the two axes are independent --")
+# Also impossible before: `move or row` collapsed both into one number, so a
+# diagonal pushed right and then down was one value twice and the second was
+# swallowed.
+p = pad(0)
+p.slot, p.cursor = None, 0
+push(p, e.ABS_X, 30000)
+push(p, e.ABS_Y, 30000)
+check(p.cursor == 5, "right and then down go one across and one row down, "
+      "got %r" % p.cursor)
+
+print("-- a claimed pad keeps its latch up to date --")
+# The step is refused while a slot is held, but the reading is still taken:
+# if letting go were missed, the first push after releasing the slot would
+# look like a continuation and be swallowed.
+p = pad(0)
+p.cursor, p.slot = 0, 0
+push(p, e.ABS_X, 30000)
+check(p.cursor == 0, "a claimed pad does not move, got %r" % p.cursor)
+push(p, e.ABS_X, 0)
+p.slot = None
+push(p, e.ABS_X, 30000)
+check(p.cursor == 1, "and moves normally once it lets the slot go, got %r"
+      % p.cursor)
 
 print("-- keyboard input uses RetroArch's own default keys --")
 k = pad(None, "USB Keyboard", "kbd")

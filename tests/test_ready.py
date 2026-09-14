@@ -40,7 +40,7 @@ class FakePad:
 
     def __init__(self, path="/dev/input/eventX", kind="pad", slot=None):
         self.path, self.kind, self.slot = path, kind, slot
-        self.cursor, self.axis_latch, self.seen = 0, 0, False
+        self.cursor, self.axis_latch, self.seen = 0, {}, False
         self.last_press = None
         self.name = "Test Pad"
         self.btn = {e.BTN_SOUTH: "confirm", e.BTN_EAST: "back",
