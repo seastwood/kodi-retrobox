@@ -81,8 +81,7 @@ Then:
     ~/retrobox/install/install.sh
 
 Then log out and back in, and put your games in `~/Games/emulation/`. That is
-the whole process — **[INSTALL.md](INSTALL.md) walks through it step by step**,
-including BIOS files, what the output means when a phase fails, and the
+the whole process — **[INSTALL.md](INSTALL.md) walks through it step by step**, what the output means when a phase fails, and the
 optional extras.
 
 The clone can go anywhere and be called anything — every script works out
