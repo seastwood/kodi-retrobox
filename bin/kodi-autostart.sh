@@ -29,6 +29,9 @@ HOLD="$HOME/.local/state/kodi-hold"
 # skin or an add-on wants Kodi to stay down when it dies, not to be put back
 # five times before the message can be read.
 NO_RESTART="$HOME/.config/retrobox-no-restart"
+# Kodi writes "Stopping the application..." the moment it begins an orderly
+# shutdown, and nothing else writes it. See quit_was_asked_for.
+KODI_LOG="$HOME/.kodi/temp/kodi.log"
 # Settings > "Restore from a backup" writes the chosen backup here and quits
 # Kodi. A restore cannot run while Kodi is up, so it happens in this gap.
 RESTORE_REQ="$HOME/.local/state/restore-request"
@@ -47,10 +50,37 @@ tidy_orphans() {
     done
 }
 
+# Whether Kodi was on its way out on purpose, whatever it exited with.
+#
+# Kodi 20 segfaults tearing down Python interpreters at shutdown when an
+# add-on service has not stopped in time -- plugin.video.jellyfin here, whose
+# own log line is "failed to stop ... (may have ended)" immediately before the
+# crash. Twelve of the thirteen crash logs on one machine are that, and
+# several of them are from somebody simply choosing Quit.
+#
+# The exit code cannot tell the difference: an orderly shutdown that segfaults
+# on the last step exits 139, exactly like a crash mid-game. So this loop put
+# Kodi straight back up, and choosing Quit did not quit -- there was no way to
+# leave Kodi from the sofa at all, and the television could not be got back to
+# a desktop without ssh.
+#
+# The log can tell the difference. Everything Kodi does after that line is
+# teardown: the player is stopped, the library closed, the settings written.
+# A crash after it has cost nothing, and it is not something to restart from.
+quit_was_asked_for() {
+    [ -f "$KODI_LOG" ] || return 1
+    tail -n 60 "$KODI_LOG" 2>/dev/null | grep -q "Stopping the application"
+}
+
 fails=0
 while :; do
     tidy_orphans
     started=$(date +%s)
+    # Not from whatever directory this was started in. A Kodi that dumps core
+    # does it in its working directory, and started from the clone -- which is
+    # how install.sh starts it -- that is a multi-gigabyte file inside a git
+    # checkout, which update.sh then tries to stash.
+    cd "$HOME" || exit 1
     kodi -fs
     rc=$?
 
@@ -100,6 +130,13 @@ while :; do
         fails=0
         sleep 2
         continue
+    fi
+    # After the hold check, not before it: stopping Kodi to give a game the
+    # screen is also an orderly shutdown, and that one does have to come back.
+    if quit_was_asked_for; then
+        logger -t kodi-autostart \
+            "Kodi exited $rc, but it had been asked to quit; not restarting"
+        break
     fi
     if [ -e "$NO_RESTART" ]; then
         logger -t kodi-autostart "Kodi exited $rc; restarting is switched off"

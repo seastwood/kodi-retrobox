@@ -43,13 +43,14 @@ stranger start from it.
 
     tests/   →  run any of them with python3
 
-About 680 checks across 32 suites -- the exact number depends on the machine, because the suites that need evdev or node skip where those are missing, and install.sh counts fewer again because it runs before the input group it just granted has taken effect: button mapping, the player picker, the sync
+About 720 checks across 34 suites -- the exact number depends on the machine, because the suites that need evdev or node skip where those are missing, and install.sh counts fewer again because it runs before the input group it just granted has taken effect: button mapping, the player picker, the sync
 pipeline, the config guard, the hold-to-exit feedback, the Bluetooth setting a
 Switch Pro Controller needs, carrying a game across a re-pick, joining a
 multi-disc game that was unpacked one folder per disc, the controller profiles
 reaching RetroArch at all, the progress bars actually moving, the
 achievements account surviving an exit, only one launcher having the
-screen, and the password in front of Kodi's web server. They use synthetic devices and fake ROM trees, so they touch
+screen, the password in front of Kodi's web server, the BIOS a system
+needs before a game is launched, and Quit meaning quit. They use synthetic devices and fake ROM trees, so they touch
 nothing real. `install.sh` runs the lot as its last phase. Bluetooth pairing
 and USB/IP have suites of their own, in the repositories that hold those
 add-ons.

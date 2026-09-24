@@ -62,7 +62,7 @@ panel.
 
     bin/         the scripts, symlinked into ~/.local/bin
     addons/      two hand-written Kodi add-ons, symlinked into ~/.kodi/addons
-    tests/       thirty-two suites, symlinked to ~/.local/share/gametests
+    tests/       thirty-four suites, symlinked to ~/.local/share/gametests
     assets/      the pixel font and the menu icons
     templates/   the RetroArch settings this console sets
     system/      what to install: packages, PPAs, cores, BIOS notes, units

@@ -19,3 +19,5 @@ backup/backup.conf
 # ~/Games/emulation. It is generated, and left untracked it made every
 # update.sh run stash something.
 games
+core
+core.*

@@ -51,12 +51,89 @@ SHADERS = {
     "Nintendo - Game Boy": "",
     "Nintendo - Game Boy Advance": "",
 }
-# Systems that cannot run a single game without a BIOS. The core's own .info
-# marks all of its firmware "optional", which here does not mean the games run
-# without it -- so that field cannot be used to work this out.
-REQUIRED_BIOS = {
-    "Sega - Mega-CD - Sega CD": ["bios_CD_U.bin", "bios_CD_E.bin", "bios_CD_J.bin"],
-}
+# Systems that cannot run a single game without a BIOS, read from
+# system/bios.tsv -- the same file retrobox-ready reads, and the only list of
+# this in the repository.
+#
+# It used to be a dict written out here, and it had one entry in it: Sega CD.
+# bios.tsv has thirteen. So PlayStation, Saturn, Dreamcast, 32X, 3DO, the Lynx
+# and the rest were launched with nothing checked, and a machine with no
+# scph5501.bin answered a chosen game with the screen going black and coming
+# straight back, saying nothing -- which is the exact failure preflight exists
+# to prevent, and which bios-required.txt already promised was handled.
+#
+# The core's own .info marks all of its firmware "optional", which here does
+# not mean the games run without it, so that field cannot be used instead.
+_BIOS_RULES = None
+
+
+def _tsv(path):
+    """Rows of one of the system/*.tsv files, comments and blanks dropped."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.rstrip("\n")
+                if not line.strip() or line.lstrip().startswith("#"):
+                    continue
+                yield line.split("\t")
+    except OSError:
+        return
+
+
+def bios_rules():
+    """{system name: (rule, [files])}, where rule is "any" or "all".
+
+    bios.tsv is keyed by ROM folder because that is what a person putting
+    files on a disk deals with; everything in here is keyed by the system name
+    RetroArch uses. systems.tsv is what joins the two, and is already the
+    authority on that pairing for the games sync.
+    """
+    global _BIOS_RULES
+    if _BIOS_RULES is not None:
+        return _BIOS_RULES
+    folders = {}
+    for row in _tsv(os.path.join(REPO, "system", "systems.tsv")):
+        if len(row) >= 2:
+            folders[row[0].strip()] = row[1].strip()
+    rules = {}
+    for row in _tsv(os.path.join(REPO, "system", "bios.tsv")):
+        if len(row) < 3:
+            continue
+        system = folders.get(row[0].strip())
+        names = [f.strip() for f in row[2].split(",") if f.strip()]
+        if system and names:
+            rules[system] = (row[1].strip(), names)
+    _BIOS_RULES = rules
+    return rules
+
+
+def bios_state(system):
+    """(present, missing, rule) for one system. Empty lists mean it needs none."""
+    rule, names = bios_rules().get(system, ("", []))
+    if not names:
+        return [], [], rule
+    here = [n for n in names
+            if os.path.exists(os.path.join(SYSTEM_DIR, n))]
+    if rule == "any":
+        # One is enough: a Sega CD only needs the BIOS for the region of the
+        # discs somebody actually owns.
+        return here, ([] if here else names), rule
+    return here, [n for n in names if n not in here], rule
+
+
+def bios_problem(system):
+    """Why this system cannot play anything, or None."""
+    _here, missing, rule = bios_state(system)
+    if not missing:
+        return None
+    joiner = " or " if rule == "any" else " and "
+    return ("%s cannot start a game without its BIOS.\n\n"
+            "Missing: [B]%s[/B]\n\n"
+            "Put it in %s -- not in the games folder, where a stray BIOS is "
+            "dropped from the playlist for looking like a game."
+            % (short_name(system),
+               joiner.join(os.path.basename(n) for n in missing),
+               SYSTEM_DIR))
 # Anything above four shares one bucket: the exact number stops mattering once
 # it is more people than a sofa holds.
 BUCKETS = [("1", "1 PLAYER"), ("2", "2 PLAYERS"), ("3", "3 PLAYERS"),
@@ -229,11 +306,13 @@ def game_info(system, entry):
                              "" if os.path.exists(core) else "  - NOT INSTALLED"))
     shader = SHADERS.get(system, CRT)
     lines.append("  filter: %s" % (os.path.basename(shader) if shader else "none"))
-    wanted = REQUIRED_BIOS.get(system)
-    if wanted:
-        have = [b for b in wanted if os.path.exists(os.path.join(SYSTEM_DIR, b))]
-        lines.append("  BIOS: %s" % (", ".join(have) if have
-                                     else "MISSING (needs one of %s)" % ", ".join(wanted)))
+    here, missing, rule = bios_state(system)
+    if here or missing:
+        joiner = " or " if rule == "any" else " and "
+        lines.append("  BIOS: %s"
+                     % (", ".join(os.path.basename(b) for b in here) if here
+                        else "MISSING - needs %s"
+                        % joiner.join(os.path.basename(b) for b in missing)))
     lines.append("")
 
     lines.append("SAVED GAMES")
@@ -330,7 +409,18 @@ def list_systems():
         if cover:
             item.setArt({"icon": cover.get("thumb", ""),
                          "thumb": cover.get("thumb", "")})
-        item.setLabel2("%d games" % len(items))
+        # A console that cannot start anything says so here, rather than
+        # letting somebody choose a game and watch the screen go black. The
+        # games are still listed -- they are there, and the BIOS may arrive.
+        _here, missing, rule = bios_state(system)
+        if missing:
+            item.setLabel2("%d games - needs %s"
+                           % (len(items),
+                              (" or " if rule == "any" else " and ").join(
+                                  os.path.basename(b) for b in missing)))
+            item.setLabel("%s  [COLOR red]![/COLOR]" % short_name(system))
+        else:
+            item.setLabel2("%d games" % len(items))
         xbmcplugin.addDirectoryItem(HANDLE, url(system=system), item, True)
     add_sync_item()
     xbmcplugin.endOfDirectory(HANDLE)
@@ -472,11 +562,7 @@ def preflight(core, rom, system):
         return "The game file is missing: %s" % os.path.basename(rom)
     if not os.path.exists(core):
         return "The emulator core is missing: %s" % os.path.basename(core)
-    wanted = REQUIRED_BIOS.get(system)
-    if wanted and not any(os.path.exists(os.path.join(SYSTEM_DIR, b))
-                          for b in wanted):
-        return "%s needs a BIOS: %s" % (short_name(system), wanted[0])
-    return None
+    return bios_problem(system)
 
 
 def launch(core, rom, system="", players="", fresh=False):
@@ -1462,6 +1548,36 @@ def game_running_now():
         return False
 
 
+READY = os.path.expanduser("~/.local/bin/retrobox-ready")
+
+
+def whats_missing():
+    """What on this machine will only be discovered by sitting down to play.
+
+    retrobox-ready has answered this all along -- a system with games and no
+    BIOS, a system with games and no core, a RetroArch setting the launcher
+    depends on -- and answered it on a terminal, which is the one place
+    nobody using a games console is looking. Everything it finds is something
+    that presents as a game not starting and saying nothing about why.
+    """
+    if not os.path.exists(READY):
+        xbmcgui.Dialog().ok("What is missing",
+                            "retrobox-ready is not installed.")
+        return
+    try:
+        done = subprocess.run([READY], stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, timeout=120)
+        out = done.stdout.decode("utf-8", "replace")
+    except (OSError, subprocess.SubprocessError) as err:
+        xbmcgui.Dialog().ok("What is missing", "Could not check: %s" % err)
+        return
+    # It colours its output for a terminal, and the escapes show up as
+    # gibberish in a text viewer.
+    out = re.sub(r"\x1b\[[0-9;]*m", "", out)
+    xbmcgui.Dialog().textviewer("What is missing", out or "nothing to report",
+                                usemono=True)
+
+
 def settings_screen():
     """The handful of things about this console worth changing from the sofa.
 
@@ -1474,6 +1590,7 @@ def settings_screen():
         rows = [
             "Start Kodi at login:  %s" % ("ON" if autostart_on() else "off"),
             "Restart Kodi if it crashes:  %s" % ("ON" if restart else "off"),
+            "What this console is missing",
             "Enable or disable menu items",
             "Achievements:  %s" % (ra_setting("cheevos_username") or "not signed in"),
             "Run the game sync now",
@@ -1484,7 +1601,7 @@ def settings_screen():
             "Close",
         ]
         pick = xbmcgui.Dialog().select("Settings", rows)
-        if pick in (-1, 9):
+        if pick in (-1, 10):
             return
         if pick == 0:
             wanted = not autostart_on()
@@ -1505,21 +1622,23 @@ def settings_screen():
             except OSError:
                 pass
         elif pick == 2:
-            menu_items_screen()
+            whats_missing()
         elif pick == 3:
-            cheevos_screen()
+            menu_items_screen()
         elif pick == 4:
+            cheevos_screen()
+        elif pick == 5:
             sync_games_now()
             return
-        elif pick == 5:
-            stop_stuck_game()
         elif pick == 6:
+            stop_stuck_game()
+        elif pick == 7:
             update_system()
             return
-        elif pick == 7:
+        elif pick == 8:
             restore_backup()
             return
-        elif pick == 8:
+        elif pick == 9:
             # Otherwise the only way in is the S key, which a console with no
             # keyboard does not have.
             xbmc.executebuiltin("ActivateWindow(Settings)")

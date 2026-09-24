@@ -7,8 +7,12 @@
 # where a stray BIOS is dropped from the playlist for looking like a game.
 #
 # If a game refuses to start, the launcher puts the reason on screen and names
-# the file, e.g. "Missing BIOS file: bios_CD_U.bin". That message is the
-# authority; this list is a convenience.
+# the file, e.g. "Missing: scph5501.bin". A console that cannot start anything
+# is also marked in the console list before you choose a game, and Settings >
+# "What this console is missing" lists every one of them at once.
+#
+# All of that is driven by bios.tsv beside this file, which is the machine-
+# readable version of this list and the only copy of it. This one is prose.
 #
 # system                      file                     needed?
 # --------------------------- ------------------------ ------------------------
