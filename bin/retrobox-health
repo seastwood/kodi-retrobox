@@ -295,12 +295,14 @@ def main(argv=()):
     print("   %d thing(s) worth fixing; each line above says how." % len(problems))
     if not quiet:
         if fresh:
-            # Only what is new. A console that says the same thing every morning
-            # is one whose notifications stop being read.
-            # ". " and not ".", or "fourth-player.service is failed" is put on
-        # the television as "fourth-player". A sentence ends with a space
-        # after it; a unit name, a filename and a version number do not.
-        head = fresh[0][1].split(". ")[0][:110]
+            # Only what is new. A console that says the same thing every
+            # morning is one whose notifications stop being read.
+            #
+            # Split on ". " and not ".", or "fourth-player.service is failed"
+            # reaches the television as "fourth-player". A sentence ends with
+            # a space after it; a unit name, a filename and a version number
+            # do not.
+            head = fresh[0][1].split(". ")[0][:110]
             tell_kodi("Console needs attention",
                       head if len(fresh) == 1
                       else "%s (and %d more)" % (head, len(fresh) - 1))
