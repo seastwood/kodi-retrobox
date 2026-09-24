@@ -154,9 +154,27 @@ check('"systems.tsv"' in source,
       "second mapping written out here")
 
 print("\nand a console that cannot play anything says so in the list")
-check("bios_state(system)" in source.split("def list_systems")[1][:1200],
+check("bios_state(system)" in source.split("def list_systems")[1][:2200],
       "the console list asks before drawing a row, so the answer is on screen "
       "before a game is chosen rather than after")
+
+print("\na console list shows consoles, not the first game on each")
+# "CONSOLES" opened onto a Mario box for the NES and a Sonic box for the
+# Genesis, which reads as a list of games. sync_games.py has been putting a
+# picture of each machine in ~/.kodi/media/consoles all along, and kodi_menu.py
+# has drawn the home rows with them all along; this screen was the one place
+# that did not look.
+listing = source.split("def list_systems")[1][:1600]
+check("CONSOLE_ICONS" in listing,
+      "the console's own picture is what the tile uses")
+check(listing.index("CONSOLE_ICONS") < listing.index('cover.get("thumb"'),
+      "and the game's box art is only the fallback, not the first choice")
+check("fanart" in listing,
+      "with the game's screenshot kept for the background, which is what made "
+      "the old behaviour look right at a glance")
+check("consoles" in ra.CONSOLE_ICONS,
+      "and it is the directory sync_games.py writes to, got %r"
+      % ra.CONSOLE_ICONS)
 
 print("\nthe sofa can see all of it")
 check("retrobox-ready" in source,

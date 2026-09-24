@@ -22,6 +22,12 @@ PICKER = os.path.expanduser("~/.local/bin/ra_players.py")
 PCGAMES = os.path.expanduser("~/.local/share/pcgames.json")
 # Shown when a PC game has no artwork of its own.
 PC_FALLBACK_ART = os.path.expanduser("~/.kodi/media/consoles/_pcgames.png")
+# One picture per console, put there by sync_games.py out of the XMB dot-art
+# the libretro assets ship. kodi_menu.py has drawn the home rows with these
+# all along; this screen did not, and showed the first game's box art instead
+# -- so "CONSOLES" opened onto a Mario box for the NES and a Sonic box for the
+# Genesis, which looks like a list of games rather than a list of machines.
+CONSOLE_ICONS = os.path.dirname(PC_FALLBACK_ART)
 # Wrapper that handles window focus and returning to Kodi afterwards.
 PC_LAUNCHER = os.path.expanduser("~/.local/bin/pcgame_launch.py")
 # How many players each game takes, written by sync_games.py from the libretro
@@ -405,9 +411,20 @@ def list_systems():
         item = xbmcgui.ListItem(label=short_name(system))
         item.setInfo("game", {"title": short_name(system),
                               "platform": short_name(system)})
-        # Use the first game's box art so each console tile has an image.
+        # The console's own picture. The first game's box art is the fallback
+        # for a system the dot-art set has no icon for, because a tile with a
+        # picture reads better than a tile without one.
         cover = art_for(system, items[0].get("label", ""))
-        if cover:
+        icon = os.path.join(CONSOLE_ICONS, system + ".png")
+        if os.path.exists(icon):
+            art = {"icon": icon, "thumb": icon}
+            # The game's screenshot still makes the background, which is what
+            # made the old behaviour look right at a glance: the console is
+            # named by the tile and the library is shown behind it.
+            if cover.get("fanart"):
+                art["fanart"] = cover["fanart"]
+            item.setArt(art)
+        elif cover:
             item.setArt({"icon": cover.get("thumb", ""),
                          "thumb": cover.get("thumb", "")})
         # A console that cannot start anything says so here, rather than
