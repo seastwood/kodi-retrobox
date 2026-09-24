@@ -204,10 +204,13 @@ if screen:
               "not the row that used to be there (index %s runs %s)"
               % (menu_row, runs.get(menu_row)))
     # The rows that moved down by one.
+    # "Restore from a backup" is no longer a row of its own: it lives inside
+    # Backups, next to where the backups are configured, which is where
+    # somebody looking for it actually goes.
     for word, function in (("sync", "sync_games_now"),
                            ("stop a game", "stop_stuck_game"),
                            ("update", "update_system"),
-                           ("restore", "restore_backup")):
+                           ("backups", "backups_screen")):
         where = next((i for i, e in enumerate(rows.value.elts)
                       if isinstance(e, ast.Constant)
                       and word in e.value.lower()), None)
@@ -218,6 +221,18 @@ if screen:
     close = len(rows.value.elts) - 1
     check(("(-1, %d)" % close) in source,
           "Close is index %d and the screen returns on it" % close)
+
+    backups = next((n for n in ast.walk(tree)
+                    if isinstance(n, ast.FunctionDef)
+                    and n.name == "backups_screen"), None)
+    check(backups is not None, "and there is a Backups screen to reach")
+    if backups is not None:
+        called = [c.func.id for c in ast.walk(backups)
+                  if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)]
+        check("restore_backup" in called,
+              "restore is offered there, so moving it did not lose it")
+        check("destinations_screen" in called,
+              "along with where the backups go")
 
 shutil.rmtree(folder, ignore_errors=True)
 print()

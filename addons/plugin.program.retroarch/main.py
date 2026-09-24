@@ -2,6 +2,7 @@ import glob
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from urllib.parse import parse_qsl, urlencode
@@ -1578,6 +1579,325 @@ def whats_missing():
                                 usemono=True)
 
 
+
+# What a backup carries, in the words somebody choosing a destination needs.
+# Asked directly: "what do backups even include? save files?"
+BACKUP_CONTENTS = (
+    "A backup carries the things you cannot download again:\n\n"
+    "  - Game saves and save states\n"
+    "  - Your playlists, so the menu comes back as it was\n"
+    "  - RetroArch's settings, and all of Kodi's\n"
+    "  - Your PC game list and hand-kept player counts\n"
+    "  - This console's own configuration and accounts\n\n"
+    "It does NOT carry your ROMs or your PC games. Those are large and they "
+    "are yours; copy them back yourself after a restore.\n\n"
+    "Snapshots are dated and share unchanged files with each other, so "
+    "keeping several costs little more than keeping one."
+)
+# The password for an ssh destination, when a key is not an option. Outside
+# the backup set on purpose: a backup carried to somebody else's disk must not
+# carry the credentials for that disk with it.
+BACKUP_PASSFILE = os.path.expanduser("~/.config/retrobox-backup-pass")
+BACKUP_KEY = os.path.expanduser("~/.ssh/id_ed25519_retrobox_backup")
+
+
+def backup_settings():
+    """Read backup.conf into (destinations, generations, maxsize, passfile)."""
+    dests, generations, maxsize, passfile = [], "7", "", ""
+    try:
+        with open(BACKUP_CONF) as handle:
+            for line in handle:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.split(":")[0] in ("local", "ssh", "path"):
+                    dests.append(line)
+                elif line.startswith("GENERATIONS="):
+                    generations = line.split("=", 1)[1].strip() or "7"
+                elif line.startswith("MAXSIZE="):
+                    maxsize = line.split("=", 1)[1].strip()
+                elif line.startswith("SSH_PASSFILE="):
+                    passfile = line.split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return dests, generations, maxsize, passfile
+
+
+def write_backup_settings(dests, generations, maxsize, passfile=""):
+    """Rewrite backup.conf, keeping the explanation at the top of it.
+
+    Written whole rather than edited in place: the file is short, this screen
+    owns every line it cares about, and a half-applied edit to the thing that
+    protects the saves is not worth the cleverness.
+    """
+    lines = [
+        "# Written by Settings > Backups on this console. You can edit it by",
+        "# hand as well; backup.conf.example beside it explains every field.",
+        "",
+        "# Where backups go. All of them are written, so a copy on this machine",
+        "# and a copy somewhere else can run side by side.",
+    ]
+    lines += dests or ["# (nowhere yet -- nothing is backed up)"]
+    lines += [
+        "",
+        "# How many dated snapshots to keep at each destination.",
+        "GENERATIONS=%s" % (generations or "7"),
+        "",
+        "# And a ceiling on the whole destination, whichever is reached first.",
+        "# The oldest go first, and the last one is never deleted.",
+        "MAXSIZE=%s" % maxsize,
+        "",
+        "# Key used for ssh: destinations.",
+        "SSH_KEY=%s" % BACKUP_KEY,
+    ]
+    if passfile:
+        lines += ["", "# A password file, for a destination that will not take a key.",
+                  "SSH_PASSFILE=%s" % passfile]
+    try:
+        os.makedirs(os.path.dirname(BACKUP_CONF), exist_ok=True)
+        with open(BACKUP_CONF, "w") as handle:
+            handle.write("\n".join(lines) + "\n")
+    except OSError as err:
+        xbmcgui.Dialog().ok("Backups", "Could not save: %s" % err)
+        return False
+    return True
+
+
+def describe_destination(dest):
+    kind, _, where = dest.partition(":")
+    if kind == "local":
+        return "This machine  -  %s" % where
+    if kind == "path":
+        return "Mounted folder  -  %s" % where
+    return "Another machine  -  %s" % where
+
+
+def backup_key_ready():
+    """Make the console's own backup key if it has not got one. Returns the
+    public key, so the screen can show what to authorise."""
+    if not os.path.exists(BACKUP_KEY):
+        try:
+            subprocess.run(["ssh-keygen", "-t", "ed25519", "-f", BACKUP_KEY,
+                            "-N", "", "-C", "retrobox-backup"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           check=True, timeout=60)
+        except (OSError, subprocess.SubprocessError):
+            return ""
+    try:
+        with open(BACKUP_KEY + ".pub") as handle:
+            return handle.read().strip()
+    except OSError:
+        return ""
+
+
+def add_ssh_destination():
+    """Ask for a machine to back up to, and how to get into it."""
+    who = xbmcgui.Dialog().input(
+        "Who and where, as user@machine", "")
+    if not who or "@" not in who:
+        if who:
+            xbmcgui.Dialog().ok("Backups",
+                                "That needs to look like [B]user@machine[/B], "
+                                "for example pi@192.168.1.50")
+        return None
+    where = xbmcgui.Dialog().input(
+        "Folder on that machine", "/srv/retro-backup")
+    if not where:
+        return None
+    how = xbmcgui.Dialog().select(
+        "How should this console log in?",
+        ["With a key this console makes  (recommended)",
+         "With a password"])
+    if how < 0:
+        return None
+    if how == 0:
+        pub = backup_key_ready()
+        if not pub:
+            xbmcgui.Dialog().ok("Backups", "Could not make a key.")
+            return None
+        xbmcgui.Dialog().textviewer(
+            "Authorise this console on %s" % who.split("@")[-1],
+            "Run this once on that machine, then choose \"Test it\":\n\n"
+            "  mkdir -p ~/.ssh && echo '%s' >> ~/.ssh/authorized_keys\n\n"
+            "Nothing else is needed. The console keeps the private half and no "
+            "password is stored anywhere.\n" % pub, usemono=True)
+        return "ssh:%s:%s" % (who, where), ""
+    # A password it is. Said plainly rather than buried.
+    if not xbmcgui.Dialog().yesno(
+            "Backups",
+            "A password has to be stored on this console to use it "
+            "unattended.\n\nIt is kept in a file only you can read, and it "
+            "is left out of the backup itself -- but a key is safer and needs "
+            "no password kept anywhere.\n\nStore a password?",
+            nolabel="Use a key instead", yeslabel="Store a password"):
+        return None
+    secret = xbmcgui.Dialog().input("Password for %s" % who, "",
+                                    option=xbmcgui.ALPHANUM_HIDE_INPUT)
+    if not secret:
+        return None
+    try:
+        with open(BACKUP_PASSFILE, "w") as handle:
+            handle.write(secret + "\n")
+        os.chmod(BACKUP_PASSFILE, 0o600)
+    except OSError as err:
+        xbmcgui.Dialog().ok("Backups", "Could not save the password: %s" % err)
+        return None
+    if not shutil.which("sshpass"):
+        xbmcgui.Dialog().ok(
+            "Backups",
+            "Saved, but [B]sshpass[/B] is not installed, and without it a "
+            "password cannot be used unattended.\n\nInstall it with:\n"
+            "  sudo apt install sshpass")
+    return "ssh:%s:%s" % (who, where), BACKUP_PASSFILE
+
+
+def test_destination(dest, passfile):
+    """Prove it works now, rather than at three in the morning."""
+    kind, _, where = dest.partition(":")
+    if kind in ("local", "path"):
+        target = os.path.expanduser(where)
+        try:
+            os.makedirs(target, exist_ok=True)
+            probe = os.path.join(target, ".retrobox-write-test")
+            with open(probe, "w") as handle:
+                handle.write("ok")
+            os.unlink(probe)
+            return True, "%s is there and can be written to." % target
+        except OSError as err:
+            return False, "Cannot write to %s:\n\n%s" % (target, err)
+    host, _, folder = where.partition(":")
+    cmd = []
+    if passfile and shutil.which("sshpass"):
+        cmd = ["sshpass", "-f", passfile]
+        opts = ["-o", "StrictHostKeyChecking=accept-new"]
+    else:
+        opts = ["-i", BACKUP_KEY, "-o", "BatchMode=yes"]
+    cmd += ["ssh"] + opts + ["-o", "ConnectTimeout=10", host,
+                             "mkdir -p '%s' && touch '%s/.retrobox-write-test' "
+                             "&& rm -f '%s/.retrobox-write-test'"
+                             % (folder, folder, folder)]
+    try:
+        done = subprocess.run(cmd, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, timeout=45)
+    except (OSError, subprocess.SubprocessError) as err:
+        return False, str(err)
+    if done.returncode == 0:
+        return True, "%s can be reached and %s can be written to." % (host, folder)
+    return False, (done.stdout.decode("utf-8", "replace").strip()
+                   or "ssh refused the connection")
+
+
+def destinations_screen():
+    while True:
+        dests, generations, maxsize, passfile = backup_settings()
+        rows = [describe_destination(d) for d in dests]
+        rows += ["Add: this machine",
+                 "Add: another machine over the network",
+                 "Add: a folder already mounted (USB disk, NAS share)",
+                 "Close"]
+        pick = xbmcgui.Dialog().select("Where backups go", rows)
+        if pick < 0 or pick == len(rows) - 1:
+            return
+        if pick < len(dests):
+            chosen = dests[pick]
+            what = xbmcgui.Dialog().select(describe_destination(chosen),
+                                           ["Test it", "Remove it", "Close"])
+            if what == 0:
+                good, message = test_destination(chosen, passfile)
+                xbmcgui.Dialog().ok("Backups",
+                                    ("[B]Works.[/B]\n\n" if good
+                                     else "[B]Not working.[/B]\n\n") + message)
+            elif what == 1 and xbmcgui.Dialog().yesno(
+                    "Backups",
+                    "Stop backing up to:\n\n[B]%s[/B]\n\nSnapshots already "
+                    "there are left alone." % describe_destination(chosen),
+                    nolabel="Keep it", yeslabel="Remove"):
+                dests.remove(chosen)
+                write_backup_settings(dests, generations, maxsize, passfile)
+            continue
+        choice = pick - len(dests)
+        if choice == 0:
+            where = xbmcgui.Dialog().input("Folder on this machine",
+                                           os.path.expanduser("~/backups"))
+            if where:
+                dests.append("local:%s" % where)
+                write_backup_settings(dests, generations, maxsize, passfile)
+        elif choice == 1:
+            made = add_ssh_destination()
+            if made:
+                dest, pf = made
+                dests.append(dest)
+                write_backup_settings(dests, generations, maxsize,
+                                      pf or passfile)
+                good, message = test_destination(dest, pf or passfile)
+                xbmcgui.Dialog().ok("Backups",
+                                    ("[B]Works.[/B]\n\n" if good
+                                     else "[B]Not working yet.[/B]\n\n")
+                                    + message)
+        elif choice == 2:
+            where = xbmcgui.Dialog().browse(
+                0, "Choose a folder that is already mounted", "files", "",
+                False, False, "/media")
+            if where:
+                dests.append("path:%s" % where.rstrip("/"))
+                write_backup_settings(dests, generations, maxsize, passfile)
+
+
+def backups_screen():
+    """Everything about backups, from the sofa.
+
+    It used to be a file only somebody with a terminal could edit, and the
+    result was a machine whose nightly backup had been doing nothing since it
+    was installed while reporting success every night.
+    """
+    while True:
+        dests, generations, maxsize, passfile = backup_settings()
+        if not dests:
+            where = "nowhere -- nothing is being backed up"
+        elif len(dests) == 1:
+            where = describe_destination(dests[0])
+        else:
+            where = "%d places" % len(dests)
+        rows = [
+            "Where backups go:  %s" % where,
+            "How many to keep:  %s" % generations,
+            "Size limit:  %s" % (maxsize or "none"),
+            "Back up now",
+            "Restore from a backup",
+            "What a backup contains",
+            "Close",
+        ]
+        pick = xbmcgui.Dialog().select("Backups", rows)
+        if pick < 0 or pick == 6:
+            return
+        if pick == 0:
+            destinations_screen()
+        elif pick == 1:
+            asked = xbmcgui.Dialog().input(
+                "How many snapshots to keep", generations,
+                type=xbmcgui.INPUT_NUMERIC)
+            if asked and asked.isdigit() and int(asked) > 0:
+                write_backup_settings(dests, asked, maxsize, passfile)
+        elif pick == 2:
+            choices = ["1 GB", "5 GB", "10 GB", "20 GB", "50 GB", "No limit"]
+            chosen = xbmcgui.Dialog().select(
+                "Stop the backups growing past", choices)
+            if chosen >= 0:
+                write_backup_settings(
+                    dests, generations,
+                    "" if chosen == len(choices) - 1
+                    else choices[chosen].replace(" GB", "G"), passfile)
+        elif pick == 3:
+            if run_backup():
+                xbmc.executebuiltin("Container.Refresh")
+        elif pick == 4:
+            restore_backup()
+            return
+        elif pick == 5:
+            xbmcgui.Dialog().textviewer("What a backup contains",
+                                        BACKUP_CONTENTS)
+
+
 def settings_screen():
     """The handful of things about this console worth changing from the sofa.
 
@@ -1596,7 +1916,7 @@ def settings_screen():
             "Run the game sync now",
             "Stop a game that will not close",
             "Update this console",
-            "Restore from a backup",
+            "Backups",
             "Kodi's own settings",
             "Close",
         ]
@@ -1636,8 +1956,7 @@ def settings_screen():
             update_system()
             return
         elif pick == 8:
-            restore_backup()
-            return
+            backups_screen()
         elif pick == 9:
             # Otherwise the only way in is the S key, which a console with no
             # keyboard does not have.

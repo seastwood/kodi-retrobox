@@ -15,6 +15,18 @@
 # How many dated snapshots to keep at each destination.
 GENERATIONS=7
 
+# And a ceiling on the whole destination, whichever is reached first. Snapshots
+# are hard-linked against each other, so this is the real space used rather
+# than the sum of their sizes.
+#
+# GENERATIONS on its own promises nothing about disk: seven snapshots of a save
+# directory are nothing, and seven of a library with include: lines pointed at
+# it can be tens of gigabytes. A console that fills its own disk cannot write
+# saves, which is the thing the backup exists to protect.
+#
+# K, M, G and T are understood. Empty means no ceiling.
+MAXSIZE=5G
+
 # Key used for ssh: destinations.
 SSH_KEY=~/.ssh/id_ed25519_usbip
 
