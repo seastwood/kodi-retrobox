@@ -189,10 +189,17 @@ done
 if [ -f "$KODI_SETTINGS" ]; then
   # Kodi stores the web server password here in the clear; that is Kodi's
   # design and cannot be changed, so the file's mode is what matters.
+  #
+  # The owner's digit is not what matters -- the other two are. This used to
+  # accept anything beginning 6 or 4, and Kodi writes the file 664, so the
+  # check passed a file that every account on the machine could read the web
+  # server password out of. That was the whole thing it existed to catch.
   mode=$(stat -c %a "$KODI_SETTINGS")
   case "$mode" in
-    6??|4??) ok "guisettings.xml is $mode" ;;
-    *) warn "guisettings.xml is $mode and holds the web server password in clear" ;;
+    ?00) ok "guisettings.xml is $mode" ;;
+    *) bad "guisettings.xml is $mode: it holds the web server password in"
+       bad "  clear, and anyone with an account here can read it."
+       bad "  Fix: chmod 600 '$KODI_SETTINGS'" ;;
   esac
 fi
 

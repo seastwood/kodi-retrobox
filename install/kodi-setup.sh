@@ -242,6 +242,43 @@ for c in changed:
 PY
 fi
 
+# ------------------------------------------ what this offers the network -----
+say "The web server's password"
+# Kodi's web server is not optional here: pcgame_launch.py, script.joyshock
+# and the Steam and Moonlight add-ons all drive Kodi through JSON-RPC on it,
+# and every one of them reads the password out of guisettings.xml when it
+# calls -- so changing the password breaks none of them, and none of them has
+# to be told.
+#
+# What is not optional either is that the password be long. Kodi binds this
+# listener to every interface and offers no setting to bind it to one, so on a
+# machine with the web server on, that password is the whole of the distance
+# between the network and full control of Kodi -- playing anything, reading
+# the library, running any add-on. The console had a four-character one,
+# chosen from the sofa with a controller, which is exactly how they get chosen
+# and exactly why this does not leave it to a person.
+#
+# Generated rather than carried: a password in the repository is a password
+# every machine installed from it shares. install/capture.sh already redacts
+# this from the published copy and writes the real one to secrets/values.txt,
+# which is git-ignored and carried by the backup.
+MIN_PASSWORD=24
+if [ ! -f "$GUISETTINGS" ]; then
+  warn "no guisettings.xml yet; start Kodi once, quit, and run this again"
+else
+  python3 "$REPO/install/kodi-services.py" "$GUISETTINGS" "$MIN_PASSWORD"
+  # Kodi stores that password in the clear and always will -- it has to send
+  # it, and there is nowhere else for it to live. So the file's mode is the
+  # only thing protecting it, and Kodi writes it 664: readable by every
+  # account on the machine. Nothing but Kodi has any business reading it.
+  before=$(stat -c %a "$GUISETTINGS" 2>/dev/null)
+  if [ "$before" != "600" ]; then
+    chmod 600 "$GUISETTINGS" && ok "guisettings.xml is 600 now, not $before"
+  else
+    skip "guisettings.xml is already 600"
+  fi
+fi
+
 say "Next"
 cat <<'EOF2'
    Start Kodi. It should come up in the console skin with your games on the
