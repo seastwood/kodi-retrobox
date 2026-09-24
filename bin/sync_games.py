@@ -342,12 +342,17 @@ def launchable(dirpath, files, exts, raw_ok=True, covered=()):
     return out
 
 
-def fill_gaps(covered=()):
+def fill_gaps(joined=()):
     """Add anything on disk that the playlist does not already list.
 
-    `covered` comes from disc_sets: the discs an .m3u now stands for. Without
+    `joined` comes from disc_sets: the discs an .m3u now stands for. Without
     it this walks straight back over them and puts every one back, which is
     the opposite of what joining them was for.
+
+    Not called `covered`, however much it wants to be: there is already a
+    local of that name below, holding the folders that have a playlist, and a
+    parameter spelled the same was overwritten by it on the second line --
+    so the discs were passed in, ignored, and added back exactly as before.
     """
     added = []
     covered = set()
@@ -384,7 +389,7 @@ def fill_gaps(covered=()):
             if not_a_game_folder(dirpath):
                 continue
             for stem, path in launchable(dirpath, files, exts, raw_ok,
-                                         covered):
+                                         joined):
                 if path in have_paths or stem in have_labels:
                     continue
                 have_paths.add(path)
@@ -433,7 +438,7 @@ def fill_gaps(covered=()):
         for dirpath, _dirs, files in os.walk(path):
             if not_a_game_folder(dirpath):
                 continue
-            found.extend(launchable(dirpath, files, exts, True, covered))
+            found.extend(launchable(dirpath, files, exts, True, joined))
         if not found:
             continue                      # an empty folder is not a problem
         so = os.path.join(COREDIR, core + ".so")
@@ -1181,7 +1186,7 @@ def main():
     log("scanned: %s" % (", ".join(scanned) if scanned else "nothing changed"))
     # After the database scan, never instead of it: anything the database can
     # identify keeps its proper metadata, and this picks up the rest.
-    gaps = fill_gaps(covered)
+    gaps = fill_gaps(joined=covered)
     if gaps:
         log("added from disk: %s" % ", ".join(gaps))
     # After both, not before them. RetroArch's own scanner lists the discs of

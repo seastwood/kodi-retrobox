@@ -189,14 +189,53 @@ check("Tekken 3 (USA).cue" in alone,
       % sorted(alone))
 shutil.rmtree(tmp, ignore_errors=True)
 
+print("\nand fill_gaps itself leaves them alone, not just launchable")
+# Through fill_gaps rather than round it: the first attempt at this passed the
+# discs in as a parameter called `covered`, which fill_gaps already uses as a
+# local for something else and overwrote on its second line. Every check that
+# called launchable directly still passed, and the sync went on adding four
+# discs and dropping them again every ten minutes.
+tmp, roms, made, missing, covered = run(four_folders)
+plists = os.path.join(tmp, "plists")
+os.makedirs(plists)
+cores = os.path.join(tmp, "cores")
+os.makedirs(cores)
+system = "Sony - PlayStation"
+core = sg.CORES[system]
+open(os.path.join(cores, core + ".so"), "wb").write(b"\0")
+# One entry already listed, so fill_gaps can learn which folder this system
+# lives in; the .m3u itself is the honest one to have there.
+json.dump({"items": [{"path": os.path.join(roms, "playstation",
+                                           NAME + ".m3u"),
+                      "label": NAME, "core_path": "x", "core_name": "y",
+                      "crc32": "00000000|crc",
+                      "db_name": system + ".lpl"}]},
+          open(os.path.join(plists, system + ".lpl"), "w"))
+saved = (sg.ROMS, sg.PLDIR, sg.COREDIR)
+sg.ROMS, sg.PLDIR, sg.COREDIR = roms, plists, cores
+try:
+    was_exts, sg.core_extensions = sg.core_extensions, \
+        lambda c: {"cue", "bin", "m3u", "chd"}
+    added = sg.fill_gaps(joined=covered)
+finally:
+    sg.core_extensions = was_exts
+    sg.ROMS, sg.PLDIR, sg.COREDIR = saved
+labels = [i["label"] for i in
+          json.load(open(os.path.join(plists, system + ".lpl")))["items"]]
+check(added == [], "fill_gaps adds nothing, got %s" % added)
+check(labels == [NAME],
+      "and the playlist still holds one game, not five, got %s" % labels)
+shutil.rmtree(tmp, ignore_errors=True)
+
 print("\nand the sync drops them after adding, not before")
 main_src = open(os.path.join(REPO, "bin", "sync_games.py")).read()
 body = main_src.split("def main():")[1]
 check(body.index("fill_gaps(") < body.index("drop_entries("),
       "RetroArch's own scanner lists the discs as well as the .m3u, so "
       "dropping them before the scan only means being handed them back")
-check("fill_gaps(covered)" in body,
-      "and fill_gaps is told what an .m3u already stands for")
+check("fill_gaps(joined=covered)" in body,
+      "and fill_gaps is told what an .m3u already stands for, by a name it "
+      "does not already use for something else")
 
 print("\nthe complaint is only made when it is news")
 tmp = tempfile.mkdtemp(prefix="discs-said-")
