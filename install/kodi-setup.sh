@@ -243,7 +243,7 @@ PY
 fi
 
 # ------------------------------------------ what this offers the network -----
-say "The web server's password"
+say "Kodi's own settings"
 # Kodi's web server is not optional here: pcgame_launch.py, script.joyshock
 # and the Steam and Moonlight add-ons all drive Kodi through JSON-RPC on it,
 # and every one of them reads the password out of guisettings.xml when it
@@ -266,7 +266,8 @@ MIN_PASSWORD=24
 if [ ! -f "$GUISETTINGS" ]; then
   warn "no guisettings.xml yet; start Kodi once, quit, and run this again"
 else
-  python3 "$REPO/install/kodi-services.py" "$GUISETTINGS" "$MIN_PASSWORD"
+  python3 "$REPO/install/kodi-services.py" "$GUISETTINGS" "$MIN_PASSWORD" \
+    "$REPO/templates/kodi-settings.conf"
   # Kodi stores that password in the clear and always will -- it has to send
   # it, and there is nowhere else for it to live. So the file's mode is the
   # only thing protecting it, and Kodi writes it 664: readable by every

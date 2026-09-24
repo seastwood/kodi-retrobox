@@ -158,6 +158,43 @@ if os.path.exists(outside):
     check(not literal.search(source),
           "and has no literal password in it")
 
+print("\nthe Kodi settings a controller made obvious")
+conf = os.path.join(REPO, "templates", "kodi-settings.conf")
+check(os.path.exists(conf), "there is a template for them")
+body = open(conf).read()
+for key, why in (
+        ("filelists.showparentdiritems",
+         "the '..' row Kodi focuses on entry, so the first press of A goes "
+         "back out instead of opening anything"),
+        ("filelists.showaddsourcebuttons",
+         "the 'Add games...' row, which opens a file dialog: a dead end from "
+         "a sofa and one wrong press away")):
+    check(key in body, "%s is set -- %s" % (key, why))
+check(body.count("#") > 8,
+      "and each one says why, because none of them is self-evident")
+
+before = ('<settings version="2">\n'
+          '    <setting id="filelists.showparentdiritems" default="true">true</setting>\n'
+          '    <setting id="filelists.showextensions" default="true">true</setting>\n'
+          '    <setting id="lookandfeel.skin">skin.aeon.nox.silvo</setting>\n'
+          '</settings>\n')
+after, changed = ks.apply_conf(before, conf)
+check(ks.read(after, "filelists.showparentdiritems") == "false",
+      "the parent-folder row is switched off")
+check(ks.read(after, "filelists.showaddsourcebuttons") == "false",
+      "and so is the add-source row, which was not in the file at all and "
+      "had to be added")
+check(ks.read(after, "lookandfeel.skin") == "skin.aeon.nox.silvo",
+      "and nothing else in the file was touched")
+line = [l for l in after.splitlines() if "showparentdiritems" in l][0]
+check('default="true"' not in line,
+      "default=\"true\" is gone, or Kodi writes its own default back over it")
+check(len(changed) == 3, "three changes reported, got %s" % changed)
+
+again, changed = ks.apply_conf(after, conf)
+check(changed == [], "a second pass changes nothing, got %s" % changed)
+check(again == after, "and rewrites nothing")
+
 print("\nand the check that should have caught the file's mode")
 sec = open(os.path.join(REPO, "install", "security-check.sh")).read()
 check("6??|4??" not in sec,

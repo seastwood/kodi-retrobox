@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Give Kodi's web server a password worth having.
+"""The Kodi settings this console sets: a web server password, and the rest.
 
-    install/kodi-services.py <guisettings.xml> [minimum length]
+    install/kodi-services.py <guisettings.xml> [minimum length] [settings.conf]
 
 Run with Kodi closed: it rewrites the file Kodi has open, and Kodi writes that
 file back out from memory when it quits.
@@ -84,6 +84,35 @@ def secure(text, least=DEFAULT_MINIMUM, make=secrets.token_urlsafe):
     return text, changed
 
 
+def apply_conf(text, conf):
+    """Merge templates/kodi-settings.conf into the document.
+
+    Same shape as the RetroArch template: one key per line, merged one at a
+    time, everything else left alone. These are the settings a controller in
+    somebody's hands made obvious -- the ".." row that eats the first button
+    press, the "Add games..." dead end -- and they are worth stating in a file
+    somebody can read rather than burying in a script.
+    """
+    changed = []
+    try:
+        with open(conf, encoding="utf-8") as fh:
+            lines = fh.readlines()
+    except OSError:
+        return text, changed
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key, value = key.strip(), value.strip()
+        if not key:
+            continue
+        if read(text, key) != value:
+            text = write(text, key, value)
+            changed.append("%s = %s" % (key, value))
+    return text, changed
+
+
 def main(argv):
     if not argv:
         print(__doc__.strip().splitlines()[2].strip(), file=sys.stderr)
@@ -99,18 +128,30 @@ def main(argv):
     new, changed = secure(text, least)
     if read(text, "services.webserver") != "true":
         print("   --    the web server is off, so it has nothing to guard")
-        return 0
-    if not changed:
+    elif not changed:
         print("   --    the web server already has a password of at least "
               "%d characters" % least)
-        return 0
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write(new)
-    print("   ok    web server secured")
-    for line in changed:
-        print("           %s" % line)
-    print("           install/capture.sh writes it to secrets/values.txt")
-    print("           (git-ignored, mode 600) if you need to read it")
+    else:
+        print("   ok    web server secured")
+        for line in changed:
+            print("           %s" % line)
+        print("           install/capture.sh writes it to secrets/values.txt")
+        print("           (git-ignored, mode 600) if you need to read it")
+
+    conf = argv[2] if len(argv) > 2 else None
+    settings = []
+    if conf:
+        new, settings = apply_conf(new, conf)
+        if settings:
+            print("   ok    %d Kodi settings applied" % len(settings))
+            for line in settings:
+                print("           %s" % line)
+        else:
+            print("   --    Kodi settings already applied")
+
+    if changed or settings:
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(new)
     return 0
 
 
