@@ -150,6 +150,54 @@ check(not made,
       "the same disc found twice is not two discs of a game, got %s" % made)
 shutil.rmtree(tmp, ignore_errors=True)
 
+print("\nthe discs an .m3u stands for do not come back as games")
+# The half of this that reached the television. disc_sets wrote the .m3u and
+# drop_entries took the four discs out of the playlist -- and then fill_gaps
+# walked the folders, found no .m3u in any of them, because it is one level
+# up, and put all four straight back. Five Legend of Dragoons, four of which
+# start a game that cannot be finished.
+tmp, roms, made, missing, covered = run(four_folders)
+ps = os.path.join(roms, "playstation")
+loose = []
+for dirpath, _dirs, files in os.walk(ps):
+    loose += [path for _stem, path in
+              sg.launchable(dirpath, files, {"cue", "bin", "m3u"}, True,
+                            covered)]
+names = sorted(os.path.basename(p) for p in loose)
+check(names == [NAME + ".m3u"],
+      "only the .m3u is offered as a game, got %s" % names)
+
+# And without being told, it would still put them back -- which is what makes
+# passing `covered` load-bearing rather than tidiness.
+blind = []
+for dirpath, _dirs, files in os.walk(ps):
+    blind += [path for _stem, path in
+              sg.launchable(dirpath, files, {"cue", "bin", "m3u"}, True)]
+check(len(blind) > len(loose),
+      "the check is doing something: without it %d files are offered, with "
+      "it %d" % (len(blind), len(loose)))
+
+# A game that is genuinely on its own in the same system folder is untouched.
+disc(ps, "Tekken 3 (USA)", "Tekken 3 (USA).cue")
+alone = []
+for dirpath, _dirs, files in os.walk(ps):
+    alone += [os.path.basename(path) for _stem, path in
+              sg.launchable(dirpath, files, {"cue", "bin", "m3u"}, True,
+                            covered)]
+check("Tekken 3 (USA).cue" in alone,
+      "a game that is not part of any set is still found, got %s"
+      % sorted(alone))
+shutil.rmtree(tmp, ignore_errors=True)
+
+print("\nand the sync drops them after adding, not before")
+main_src = open(os.path.join(REPO, "bin", "sync_games.py")).read()
+body = main_src.split("def main():")[1]
+check(body.index("fill_gaps(") < body.index("drop_entries("),
+      "RetroArch's own scanner lists the discs as well as the .m3u, so "
+      "dropping them before the scan only means being handed them back")
+check("fill_gaps(covered)" in body,
+      "and fill_gaps is told what an .m3u already stands for")
+
 print("\nthe complaint is only made when it is news")
 tmp = tempfile.mkdtemp(prefix="discs-said-")
 said = []

@@ -271,7 +271,7 @@ def uses_raw_tracks(items):
     return False
 
 
-def launchable(dirpath, files, exts, raw_ok=True):
+def launchable(dirpath, files, exts, raw_ok=True, covered=()):
     """The files in one directory worth putting in a playlist.
 
     A disc game is a cue (or an m3u for multi-disc) plus track data, and the
@@ -280,6 +280,15 @@ def launchable(dirpath, files, exts, raw_ok=True):
     on what is actually sitting there, gets both right without a per-system
     list: Sega CD folders hold a .cue so their .bin is skipped, Genesis folders
     hold no .cue so their .bin is the game.
+
+    `covered` is every disc, by full path, that some .m3u anywhere in the
+    system already stands for. Deciding that from this directory alone was
+    enough while a set lived in one folder, and stopped being enough the
+    moment one did not: a four-disc game unpacks to a folder per disc, the
+    .m3u goes at the folder above them, and each disc's own directory then
+    contains no .m3u at all. So all four came back as games of their own
+    directly after being taken out -- five Legend of Dragoons on the
+    television, four of which start a game nobody can finish.
     """
     present = set(f.rsplit(".", 1)[-1].lower() for f in files if "." in f)
     # Which discs the .m3u files here actually stand for. This used to be the
@@ -324,6 +333,8 @@ def launchable(dirpath, files, exts, raw_ok=True):
             continue                      # this system's games are not raw dumps
         if name in spoken_for and "m3u" in exts:
             continue                      # an m3u here is the entry point
+        if os.path.join(dirpath, name) in covered:
+            continue                      # an m3u elsewhere is the entry point
         if present & CUE_EXTS:
             if ext in TRACK_EXTS:
                 continue                  # the cue is the entry point
@@ -331,8 +342,13 @@ def launchable(dirpath, files, exts, raw_ok=True):
     return out
 
 
-def fill_gaps():
-    """Add anything on disk that the playlist does not already list."""
+def fill_gaps(covered=()):
+    """Add anything on disk that the playlist does not already list.
+
+    `covered` comes from disc_sets: the discs an .m3u now stands for. Without
+    it this walks straight back over them and puts every one back, which is
+    the opposite of what joining them was for.
+    """
     added = []
     covered = set()
     for pl in sorted(glob.glob(os.path.join(PLDIR, "*.lpl"))):
@@ -367,7 +383,8 @@ def fill_gaps():
         for dirpath, _dirs, files in os.walk(os.path.join(ROMS, folder)):
             if not_a_game_folder(dirpath):
                 continue
-            for stem, path in launchable(dirpath, files, exts, raw_ok):
+            for stem, path in launchable(dirpath, files, exts, raw_ok,
+                                         covered):
                 if path in have_paths or stem in have_labels:
                     continue
                 have_paths.add(path)
@@ -416,7 +433,7 @@ def fill_gaps():
         for dirpath, _dirs, files in os.walk(path):
             if not_a_game_folder(dirpath):
                 continue
-            found.extend(launchable(dirpath, files, exts, True))
+            found.extend(launchable(dirpath, files, exts, True, covered))
         if not found:
             continue                      # an empty folder is not a problem
         so = os.path.join(COREDIR, core + ".so")
@@ -1158,18 +1175,23 @@ def main():
     made, incomplete, covered = disc_sets()
     for line in made:
         log("  joined discs: %s" % line)
-    if covered:
-        for label in drop_entries(covered):
-            log("  replaced by its .m3u: %s" % label)
     for line in incomplete:
         log("  INCOMPLETE %s" % line)
     scanned = scan_all()
     log("scanned: %s" % (", ".join(scanned) if scanned else "nothing changed"))
     # After the database scan, never instead of it: anything the database can
     # identify keeps its proper metadata, and this picks up the rest.
-    gaps = fill_gaps()
+    gaps = fill_gaps(covered)
     if gaps:
         log("added from disk: %s" % ", ".join(gaps))
+    # After both, not before them. RetroArch's own scanner lists the discs of
+    # a set as well as the .m3u, so dropping them first only meant dropping
+    # them and then being handed them straight back -- which is exactly what
+    # happened: four discs removed and four discs added, every ten minutes,
+    # with five Legend of Dragoons on the television in between.
+    if covered:
+        for label in drop_entries(covered):
+            log("  replaced by its .m3u: %s" % label)
     gone = prune_missing()
     if gone:
         log("removed, no longer on disk: %s" % ", ".join(gone))
