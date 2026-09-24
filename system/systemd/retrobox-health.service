@@ -1,0 +1,11 @@
+[Unit]
+Description=Check whether anything on this console is quietly broken
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %h/.local/bin/retrobox-health
+# It reads journals and runs retrobox-ready; neither is urgent.
+Nice=10
+IOSchedulingClass=idle
+# It exits non-zero when it finds something, which is the point, not a fault.
+SuccessExitStatus=0 1

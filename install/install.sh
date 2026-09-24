@@ -624,7 +624,7 @@ elif [ "$TARGET_HOME" != "$HOME" ]; then
   skip "not touching systemd (installing into $TARGET_HOME)"
 else
   systemctl --user daemon-reload 2>/dev/null
-  for t in sync-games.timer retro-backup.timer \
+  for t in sync-games.timer retro-backup.timer retrobox-health.timer \
            retro-padmap.service retro-padmap.path; do
     if [ -f "$TARGET_HOME/.config/systemd/user/$t" ]; then
       systemctl --user enable --now "$t" 2>/dev/null && ok "$t enabled" ||

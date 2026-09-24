@@ -1,0 +1,15 @@
+[Unit]
+Description=Look for things that have quietly stopped working
+
+[Timer]
+# Morning, so anything found overnight is on the television before the
+# console is used rather than after.
+OnCalendar=*-*-* 09:00:00
+# A machine that is off at nine still gets checked when it comes back, which
+# is the normal case for a console.
+Persistent=true
+RandomizedDelaySec=10m
+OnStartupSec=5min
+
+[Install]
+WantedBy=timers.target

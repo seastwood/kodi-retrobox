@@ -1,0 +1,315 @@
+#!/usr/bin/env python3
+"""Whether anything on this console is quietly broken, and say so where it shows.
+
+There are already three scripts that answer a question about this machine, and
+all three answer it on a terminal. retrobox-check asks whether the code is up
+to date, retrobox-ready asks whether the games can start, security-check asks
+what is offered to the network. Nobody sitting on a sofa runs any of them.
+
+So everything they find is found by somebody going looking, and the things that
+go wrong here do not announce themselves:
+
+  * One machine's nightly backup had been doing nothing since it was installed.
+    `backup.conf` was never written, so the script printed "nothing configured,
+    doing nothing" and exited 0, and systemd recorded a success every night for
+    weeks. The game saves were not backed up and nothing said so.
+
+  * The streaming host segfaulted sixteen times in six days on another machine,
+    seven of them in one day. systemd restarted it each time, which is what it
+    is meant to do, and the only trace was a line in a journal.
+
+  * Fifty-two Kodi crash logs and a hundred and fifty core dumps accumulated on
+    a disk that nothing was watching.
+
+None of those stops a game starting today, which is exactly why they can run
+for weeks. This runs on a timer and puts them on the television.
+
+Quiet on purpose. It says nothing at all unless something is wrong, and says a
+thing once rather than every day -- a console that cries wolf every morning is
+one whose notifications get ignored, which is the state it is trying to fix.
+
+Read-only: it changes nothing, and never touches the things it reports on.
+"""
+import json
+import os
+import subprocess
+import sys
+import time
+
+HOME = os.path.expanduser("~")
+REPO = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+STATE = os.path.join(HOME, ".local", "state", "retrobox-health.json")
+KODI_SEND = "/usr/bin/kodi-send"
+
+BOLD, DIM, OFF = "\033[1m", "\033[2m", "\033[0m"
+problems = []                 # (key, one-line summary) -- key is what is remembered
+notes = []
+
+
+def say(title):
+    print("\n%s== %s%s" % (BOLD, title, OFF))
+
+
+def ok(msg):
+    print("   ok    %s" % msg)
+
+
+def bad(key, msg):
+    print("   MISS  %s" % msg)
+    problems.append((key, msg))
+
+
+def note(msg):
+    print("   %s--    %s%s" % (DIM, msg, OFF))
+    notes.append(msg)
+
+
+def run(args, timeout=120):
+    """(returncode, output). A tool that is not here is not a failure."""
+    try:
+        done = subprocess.run(args, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, timeout=timeout)
+        return done.returncode, done.stdout.decode("utf-8", "replace")
+    except FileNotFoundError:
+        return None, ""
+    except (OSError, subprocess.SubprocessError) as exc:
+        return None, str(exc)
+
+
+def unit_property(unit, name):
+    _code, out = run(["systemctl", "--user", "show", unit, "-p", name,
+                      "--value"], timeout=30)
+    return (out or "").strip()
+
+
+
+def remember(keys):
+    try:
+        os.makedirs(os.path.dirname(STATE), exist_ok=True)
+        with open(STATE, "w") as fh:
+            json.dump({"problems": sorted(keys), "at": time.time()}, fh,
+                      indent=2)
+    except OSError:
+        pass
+
+
+def said_before():
+    try:
+        with open(STATE) as fh:
+            return set(json.load(fh).get("problems", []))
+    except (OSError, ValueError):
+        return set()
+
+
+def tell_kodi(title, message):
+    """On the television, silently. Same route the games sync uses."""
+    if not os.path.exists(KODI_SEND):
+        return
+    import urllib.parse
+    query = urllib.parse.urlencode({"notify": "1", "title": title,
+                                    "message": message[:180],
+                                    "seconds": "20000"})
+    run([KODI_SEND, "--host=127.0.0.1",
+         "--action=RunPlugin(plugin://plugin.program.retroarch/?%s)" % query],
+        timeout=20)
+
+
+def main(argv=()):
+    """Run every check. Returns 0 when nothing is wrong, 1 when something is."""
+    quiet = "--quiet" in argv
+    del problems[:]
+    del notes[:]
+    # --------------------------------------------------------------- backups ---
+    say("Backups")
+    # The failure this exists for: a backup that runs, does nothing, and succeeds.
+    _code, out = run(["systemctl", "--user", "show", "retro-backup.service",
+                      "-p", "ExecMainStartTimestamp", "--value"], timeout=30)
+    last_run = (out or "").strip()
+    _code, log = run(["journalctl", "--user", "-u", "retro-backup.service",
+                      "--since", "3 days ago", "--no-pager"], timeout=60)
+    if not last_run:
+        bad("backup-never", "the backup has never run. Fix: install.sh enables "
+                            "retro-backup.timer")
+    elif "nothing configured" in log:
+        # Exit status 0, nightly, for ever. This is the one that hid the longest.
+        bad("backup-unconfigured",
+            "the nightly backup runs and does nothing: there is no "
+            "backup/backup.conf, so it has never saved a thing. "
+            "Fix: copy backup/backup.conf.example and name a destination")
+    elif "backed up" in log:
+        kept = [l for l in log.splitlines() if "backed up" in l]
+        ok("backed up %s" % (kept[-1].split("backed up", 1)[1].strip()[:60]
+                             if kept else "recently"))
+        # A backup on the same disk as the thing it protects survives a mistake
+        # and nothing else.
+        for line in kept[-1:]:
+            where = line.rsplit(" to ", 1)[-1].strip()
+            if where.startswith(HOME):
+                note("it is written to %s, which is this machine's own disk -- it "
+                     "survives a deletion but not the disk" % where)
+    elif "failed" in log.lower():
+        bad("backup-failing", "the last backup reported a failure. "
+                              "Fix: run bin/retro_backup.sh and read what it says")
+    else:
+        note("no backup in the last three days; the timer may not have come round")
+
+    # --------------------------------------------------------------- services --
+    say("Services that should be running")
+    for unit, what in (("fourth-player.service", "the streaming host"),
+                       ("sync-games.timer", "the games sync"),
+                       ("retro-backup.timer", "the backup"),
+                       ("retro-padmap.path", "controller mapping")):
+        state = unit_property(unit, "ActiveState")
+        if not state:
+            note("%s is not installed" % unit)
+            continue
+        if state in ("active", "activating", "listening"):
+            ok("%s (%s)" % (unit, what))
+        elif unit.endswith(".timer") and state == "waiting":
+            ok("%s (%s)" % (unit, what))
+        else:
+            bad("unit-" + unit, "%s is %s, not running -- %s is down"
+                % (unit, state, what))
+
+    _code, failed = run(["systemctl", "--user", "--failed", "--no-legend",
+                         "--no-pager"], timeout=30)
+    names = [l.split()[0] for l in (failed or "").splitlines() if l.strip()]
+    if names:
+        bad("units-failed", "failed: %s" % ", ".join(names))
+
+    # ------------------------------------------------------------- crashing ----
+    say("Anything crashing")
+    # A service systemd keeps restarting is invisible: it is always "active" when
+    # anybody looks. The count is the only thing that shows it.
+    _code, out = run(["journalctl", "--user", "-u", "fourth-player",
+                      "--since", "24 hours ago", "--no-pager"], timeout=90)
+    segv = (out or "").count("Fatal Python error")
+    if segv:
+        bad("fourth-player-segv",
+            "the streaming host crashed %d time(s) in 24 hours and was restarted. "
+            "Fix: see the notes in fourthplayer/video.py about G_IS_OBJECT" % segv)
+    elif out:
+        ok("the streaming host has not crashed in 24 hours")
+    warnings = (out or "").count("G_IS_OBJECT")
+    if warnings:
+        note("%d GObject assertion(s) in 24 hours: the use-after-free is still "
+             "happening, it is just no longer fatal" % warnings)
+
+    crashlogs = []
+    try:
+        crashlogs = [n for n in os.listdir(HOME) if n.startswith("kodi_crashlog-")]
+    except OSError:
+        pass
+    if len(crashlogs) > 20:
+        bad("kodi-crashlogs",
+            "%d Kodi crash logs have piled up in the home directory. They are "
+            "small but they are a symptom, and nothing removes them"
+            % len(crashlogs))
+    elif crashlogs:
+        note("%d Kodi crash log(s)" % len(crashlogs))
+
+    _code, cores = run(["coredumpctl", "list", "--no-pager"], timeout=60)
+    kept = (cores or "").count("SIGSEGV")
+    if kept > 40:
+        bad("coredumps",
+            "%d core dumps are being kept. Each is tens of megabytes. "
+            "Fix: sudo journalctl --vacuum-time=7d, or set MaxUse in "
+            "/etc/systemd/coredump.conf" % kept)
+    elif kept:
+        note("%d core dump(s) kept" % kept)
+
+    # ----------------------------------------------------------------- disk ----
+    say("Room to work in")
+    try:
+        st = os.statvfs(HOME)
+        free = st.f_bavail * st.f_frsize
+        total = st.f_blocks * st.f_frsize
+        used = 100.0 * (1 - free / float(total)) if total else 0
+        line = "%.0f%% used, %.0f GB free" % (used, free / 1e9)
+        if used >= 90:
+            bad("disk-full", "the disk is %s -- games will stop being added and "
+                             "saves may fail to write" % line)
+        elif used >= 80:
+            bad("disk-filling", "the disk is %s" % line)
+        else:
+            ok(line)
+    except OSError as exc:
+        note("could not read the disk: %s" % exc)
+
+    # ------------------------------------------------------------ playability --
+    say("Whether it can still play what is here")
+    # Beside this script in the repository, or beside it in ~/.local/bin where
+    # deploy.sh links both. Run from anywhere else -- which is how this was first
+    # tried -- the repo-relative guess misses and the whole section silently says
+    # nothing.
+    ready = None
+    for candidate in (os.path.join(REPO, "bin", "retrobox-ready"),
+                      os.path.join(os.path.dirname(os.path.realpath(__file__)),
+                                   "retrobox-ready"),
+                      os.path.join(HOME, ".local", "bin", "retrobox-ready")):
+        if os.path.exists(candidate):
+            ready = candidate
+            break
+    code, out = run([ready], timeout=180) if ready else (None, "")
+    if code is None:
+        note("retrobox-ready is not available")
+    else:
+        misses = [l.strip()[6:].strip() for l in out.splitlines()
+                  if l.strip().startswith("MISS")]
+        if misses:
+            # Reported as one problem, not one per line: a machine with no
+            # PlayStation BIOS has twelve games that cannot start and one thing
+            # to do about it.
+            bad("not-ready", "%d thing(s) would stop a game starting: %s"
+                % (len(misses), misses[0][:90]))
+            for line in misses[1:]:
+                print("           %s" % line[:110])
+        else:
+            ok("every system with games has its BIOS, its core and its settings")
+
+    # ------------------------------------------------------------ the sync -----
+    say("Games appearing")
+    _code, out = run(["journalctl", "--user", "-u", "sync-games.service",
+                      "--since", "24 hours ago", "--no-pager"], timeout=60)
+    if out and "sync failed" in out:
+        bad("sync-failing", "the games sync has failed in the last 24 hours. "
+                            "Fix: run ~/.local/bin/sync_games.py and read it")
+    elif out and "done" in out:
+        ok("the games sync is running and finishing")
+    else:
+        note("the games sync has not run in the last 24 hours")
+
+    # ----------------------------------------------------------------- said ----
+    say("What to do")
+
+
+    keys = [k for k, _m in problems]
+    before = said_before()
+    fresh = [(k, m) for k, m in problems if k not in before]
+    remember(keys)
+
+    if not problems:
+        print("   Nothing is broken that this can see.")
+        return 0
+
+    print("   %d thing(s) worth fixing; each line above says how." % len(problems))
+    if not quiet:
+        if fresh:
+            # Only what is new. A console that says the same thing every morning
+            # is one whose notifications stop being read.
+            # ". " and not ".", or "fourth-player.service is failed" is put on
+        # the television as "fourth-player". A sentence ends with a space
+        # after it; a unit name, a filename and a version number do not.
+        head = fresh[0][1].split(". ")[0][:110]
+            tell_kodi("Console needs attention",
+                      head if len(fresh) == 1
+                      else "%s (and %d more)" % (head, len(fresh) - 1))
+            print("   %d of them are new and have been put on the television."
+                  % len(fresh))
+        else:
+            print("   None of them are new, so nothing was put on the television.")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
