@@ -56,7 +56,7 @@ SHADERS = {
 # this in the repository.
 #
 # It used to be a dict written out here, and it had one entry in it: Sega CD.
-# bios.tsv has thirteen. So PlayStation, Saturn, Dreamcast, 32X, 3DO, the Lynx
+# bios.tsv has twelve. So PlayStation, Saturn, Dreamcast, 32X, 3DO, the Lynx
 # and the rest were launched with nothing checked, and a machine with no
 # scph5501.bin answered a chosen game with the screen going black and coming
 # straight back, saying nothing -- which is the exact failure preflight exists

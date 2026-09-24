@@ -7,7 +7,7 @@ sends RetroArch's output to /dev/null, so there is no other clue anywhere.
 It was checking one system. The list of systems that cannot run a game without
 a BIOS was a dict written out in the add-on with a single entry in it, Sega CD,
 while system/bios.tsv -- which retrobox-ready reads, and which
-bios-required.txt is the prose version of -- has thirteen. So PlayStation,
+bios-required.txt is the prose version of -- has twelve. So PlayStation,
 Saturn, Dreamcast, 32X, 3DO, the Lynx and the rest were launched with nothing
 checked at all. Two machines here have PlayStation games and no PlayStation
 BIOS, and bios-required.txt promises in writing that "if a game refuses to
@@ -146,7 +146,7 @@ check(ra.SYSTEM_DIR.endswith("retroarch/system"),
 print("\nthe one list is the .tsv, not a copy of it")
 source = open(MAIN).read()
 check("REQUIRED_BIOS" not in source,
-      "the hand-written dict is gone -- it is what went thirteen systems out "
+      "the hand-written dict is gone -- it is what went eleven systems out "
       "of date without anybody noticing")
 check('"bios.tsv"' in source, "and bios.tsv is read directly")
 check('"systems.tsv"' in source,
