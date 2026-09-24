@@ -1,6 +1,7 @@
 import glob
 import json
 import os
+import re
 import subprocess
 import sys
 from urllib.parse import parse_qsl, urlencode
@@ -502,7 +503,7 @@ def launch(core, rom, system="", players="", fresh=False):
         games = [g for g in read_games(RECENT) if g.get("path") != rom]
         write_json(RECENT, {"games": ([row] + games)[:RECENT_MAX]})
     except OSError:
-        pass                              # remembering is a nicety, not the job                              # remembering is a nicety, not the job
+        pass                        # remembering is a nicety, not the job
     argv = [PICKER]
     if fresh:
         argv += ["--fresh"]
@@ -523,7 +524,8 @@ def list_stored(path, heading, empty):
     xbmcplugin.setContent(HANDLE, "games")
     games = [g for g in read_games(path) if os.path.exists(g.get("path", ""))]
     if not games:
-        xbmcgui.Dialog().notification(heading, empty, xbmcgui.NOTIFICATION_INFO)
+        xbmcgui.Dialog().notification(heading, empty,
+                                      xbmcgui.NOTIFICATION_INFO, sound=False)
     counts = player_counts()
     for game in games:
         system = game.get("system", "")
@@ -552,7 +554,7 @@ def toggle_favourite(system, label):
                     break
         if found is None:
             xbmcgui.Dialog().notification("Favourites", "Could not find that game",
-                                          xbmcgui.NOTIFICATION_ERROR)
+                                          xbmcgui.NOTIFICATION_ERROR, sound=False)
             return
         kept.append(stored(system, found,
                            player_counts().get(system, {}).get(label)))
@@ -561,7 +563,7 @@ def toggle_favourite(system, label):
         message = "Removed from favourites"
     write_json(FAVOURITES, {"games": kept})
     xbmcgui.Dialog().notification("Favourites", message, xbmcgui.NOTIFICATION_INFO,
-                                  2500)
+                                  2500, sound=False)
     xbmc.executebuiltin("Container.Refresh")
 
 
@@ -578,7 +580,7 @@ def resume():
             last = json.load(handle)
     except (OSError, ValueError):
         xbmcgui.Dialog().notification("Continue", "No game has been played yet",
-                                      xbmcgui.NOTIFICATION_INFO)
+                                      xbmcgui.NOTIFICATION_INFO, sound=False)
         return
     launch(last.get("core", ""), last.get("rom", ""),
            last.get("system", ""), last.get("maxplayers", ""))
@@ -595,10 +597,148 @@ def run(argv, what, cwd=None):
     except OSError as exc:
         xbmc.log("plugin.program.retroarch: launch failed: %s" % exc, xbmc.LOGERROR)
         xbmcgui.Dialog().notification("RetroArch", "Could not start RetroArch",
-                                      xbmcgui.NOTIFICATION_ERROR)
+                                      xbmcgui.NOTIFICATION_ERROR, sound=False)
         return
     xbmc.log("plugin.program.retroarch: launched %s" % " ".join(argv), xbmc.LOGINFO)
-    xbmcgui.Dialog().notification("RetroArch", what, xbmcgui.NOTIFICATION_INFO, 3000)
+    xbmcgui.Dialog().notification("RetroArch", what,
+                                  xbmcgui.NOTIFICATION_INFO, 3000, sound=False)
+
+
+def show_notice(title, message, seconds=12000):
+    """A notification raised on behalf of something running outside Kodi.
+
+    sync_games.py and ra_players.py have no Kodi to call into, so they used
+    kodi-send and the Notification() builtin -- which has no way to ask for
+    silence, and rang the notification sound every ten minutes for a disc that
+    was never going to arrive. The builtin cannot be fixed; this is the same
+    popup raised through the Python API, where silence is an argument.
+    """
+    try:
+        seconds = max(1000, int(seconds))
+    except (TypeError, ValueError):
+        seconds = 12000
+    xbmcgui.Dialog().notification(title or "Console", message or "",
+                                  xbmcgui.NOTIFICATION_INFO, seconds,
+                                  sound=False)
+
+
+# How a long job's output maps onto a progress bar. Each entry is the first
+# words of a line the job prints, the percentage the job has reached by the
+# time it prints it, and what to put on screen. Between two marks the bar
+# creeps on elapsed time, so it keeps moving through a phase that says
+# nothing -- but it can never pass the next mark, so it never claims progress
+# that has not happened.
+#
+# All five of these bars used to sit at 0% for the whole run: every one of
+# them called a blocking subprocess.run() and then closed the dialog, so
+# update() was never called once. A bar that cannot move is worse than no bar,
+# because it reads as a job that has hung.
+SYNC_MARKS = [
+    ("controller profiles", 4, "Controller profiles"),
+    ("joined discs", 8, "Multi-disc games"),
+    ("scanned:", 30, "Scanning for new games"),
+    ("added from disk", 40, "Games the database did not know"),
+    ("removed, no longer", 45, "Games that have gone"),
+    ("cores assigned", 55, "Choosing emulators"),
+    ("art:", 85, "Fetching box art"),
+    ("console icons", 90, "Console icons"),
+    ("menu ", 96, "Rebuilding the menu"),
+    ("done", 100, "Finished"),
+]
+
+UPDATE_MARKS = [
+    ("== Where this is", 2, "Looking at the clone"),
+    ("== Fetching", 6, "Fetching from GitHub"),
+    ("== Packages", 14, "Packages"),
+    ("== Linking the code", 26, "Installing the code"),
+    ("== Add-ons kept", 32, "Add-ons"),
+    ("== Fourth Player", 40, "Fourth Player"),
+    ("== Configuration", 50, "Configuration"),
+    ("== Starting Kodi at login", 58, "Startup"),
+    ("== Emulator cores", 66, "Emulator cores"),
+    ("== Shaders", 74, "Shaders"),
+    ("== Timers and services", 80, "Timers and services"),
+    ("== Kodi", 86, "Kodi"),
+    ("== Checking it works", 92, "Checking it works"),
+    ("== What is left", 99, "Nearly there"),
+]
+
+BACKUP_MARKS = [
+    ("capture", 10, "Capturing this machine's settings"),
+    ("backed up", 70, "Copying"),
+]
+
+
+MENU_MARKS = [
+    ("menu unchanged", 45, "Nothing to change"),
+    ("menu rebuilt", 45, "Reloading the skin"),
+]
+
+
+def bar_update(bar, percent, heading, caption):
+    """The two progress dialogs do not take the same arguments.
+
+    DialogProgressBG is update(percent, heading, message); DialogProgress is
+    update(percent, message) and raises on a third. Both are used here, so
+    which one this is has to be asked rather than assumed.
+    """
+    if isinstance(bar, xbmcgui.DialogProgressBG):
+        bar.update(percent, heading, caption)
+    else:
+        bar.update(percent, caption or heading)
+
+
+def follow(argv, bar, heading, marks, expect=120.0, timeout=3600, cwd=None):
+    """Run a job, moving a progress bar as its output says how far it has got.
+
+    Returns (returncode, output).
+    """
+    import threading
+    import time
+
+    lines = []
+    try:
+        child = subprocess.Popen(argv, stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT, cwd=cwd)
+    except (OSError, subprocess.SubprocessError):
+        raise
+
+    def read():
+        for raw in child.stdout:
+            lines.append(raw.decode("utf-8", "replace").rstrip("\n"))
+
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+
+    started = time.time()
+    at = 0
+    caption = ""
+    seen = 0                       # how many lines have been looked at
+    step = 0                       # how far down the marks the job has got
+    while True:
+        while seen < len(lines):
+            # Strip the bold/colour escapes install.sh writes round its
+            # headings, or none of the "== " marks would ever match.
+            line = re.sub(r"\x1b\[[0-9;]*m", "", lines[seen]).strip()
+            seen += 1
+            for i in range(step, len(marks)):
+                needle, percent, what = marks[i]
+                if line.startswith(needle) or needle in line:
+                    at, caption, step = percent, what, i + 1
+                    break
+        ceiling = marks[step][1] - 1 if step < len(marks) else 99
+        elapsed = time.time() - started
+        creep = min(ceiling, int(100 * elapsed / expect)) if expect else at
+        bar_update(bar, max(at, min(creep, ceiling)), heading, caption)
+        if child.poll() is not None:
+            break
+        if elapsed > timeout:
+            child.kill()
+            break
+        xbmc.sleep(400)
+    reader.join(timeout=5)
+    bar_update(bar, 100, heading, "Finished")
+    return child.returncode, "\n".join(lines)
 
 
 def reap():
@@ -776,21 +916,20 @@ def run_backup():
     progress = xbmcgui.DialogProgressBG()
     progress.create("Backup", "Copying saves and settings")
     try:
-        done = subprocess.run([BACKUP_SH], stdout=subprocess.PIPE,
-                              stderr=subprocess.STDOUT, timeout=3600)
+        code, out = follow([BACKUP_SH], progress, "Backup", BACKUP_MARKS,
+                           expect=180.0, timeout=3600)
     except (OSError, subprocess.SubprocessError) as err:
         progress.close()
         xbmcgui.Dialog().ok("Backup", "The backup did not run: %s" % err)
         return False
     progress.close()
-    out = done.stdout.decode("utf-8", "replace")
-    if done.returncode != 0:
+    if code != 0:
         xbmcgui.Dialog().textviewer("Backup failed", out or "no output",
                                     usemono=True)
         return False
     tail = [l for l in out.splitlines() if l.strip()]
     xbmcgui.Dialog().notification("Backup", tail[-1] if tail else "done",
-                                  xbmcgui.NOTIFICATION_INFO)
+                                  xbmcgui.NOTIFICATION_INFO, sound=False)
     return True
 
 
@@ -874,7 +1013,7 @@ def restore_backup():
         return
 
     xbmcgui.Dialog().notification("Restoring", "Kodi will close and come back",
-                                  xbmcgui.NOTIFICATION_INFO)
+                                  xbmcgui.NOTIFICATION_INFO, sound=False)
     xbmc.sleep(2500)
     xbmc.executebuiltin("Quit()")
 
@@ -918,15 +1057,14 @@ def update_system():
     progress = xbmcgui.DialogProgressBG()
     progress.create("Update", "Fetching and installing")
     try:
-        done = subprocess.run([UPDATE_SH, "--yes"], stdout=subprocess.PIPE,
-                              stderr=subprocess.STDOUT, timeout=3600)
+        code, out = follow([UPDATE_SH, "--yes"], progress, "Update",
+                           UPDATE_MARKS, expect=300.0, timeout=3600)
     except (OSError, subprocess.SubprocessError) as err:
         progress.close()
         xbmcgui.Dialog().ok("Update", "The update did not run: %s" % err)
         return
     progress.close()
-    out = done.stdout.decode("utf-8", "replace")
-    if done.returncode != 0:
+    if code != 0:
         xbmcgui.Dialog().textviewer("Update finished with problems", out,
                                     usemono=True)
         return
@@ -975,7 +1113,7 @@ def stop_stuck_game():
     except OSError:
         pass
     xbmcgui.Dialog().notification("Stopped", ", ".join(found),
-                                  xbmcgui.NOTIFICATION_INFO)
+                                  xbmcgui.NOTIFICATION_INFO, sound=False)
 
 
 def menu_items_screen():
@@ -996,8 +1134,9 @@ def menu_items_screen():
         progress = xbmcgui.DialogProgress()
         progress.create("Menu items", "Looking at the menu...")
         try:
-            subprocess.call([MENU_BUILDER])
-        except OSError:
+            follow([MENU_BUILDER], progress, "Menu items", MENU_MARKS,
+                   expect=45.0, timeout=180)
+        except (OSError, subprocess.SubprocessError):
             pass
         progress.close()
 
@@ -1015,17 +1154,16 @@ def menu_items_screen():
 
     changed = False
     while True:
-        hidden = read_hidden_menu()
+        hidden, shown = read_menu_switches()
         rows = []
         for item in items:
+            label = item.get("label", "?")
             if item.get("fixed"):
-                rows.append("%s   [COLOR grey]always on[/COLOR]"
-                            % item.get("label", "?"))
-            elif item.get("key") in hidden:
-                rows.append("%s   [COLOR grey]off[/COLOR]"
-                            % item.get("label", "?"))
+                rows.append("%s   [COLOR grey]always on[/COLOR]" % label)
+            elif row_on(item, hidden, shown):
+                rows.append("%s   ON" % label)
             else:
-                rows.append("%s   ON" % item.get("label", "?"))
+                rows.append("%s   [COLOR grey]off[/COLOR]" % label)
         rows.append("Close")
 
         pick = xbmcgui.Dialog().select("Menu items", rows)
@@ -1041,7 +1179,7 @@ def menu_items_screen():
             continue
 
         key = item.get("key")
-        turning_off = key not in hidden
+        turning_off = row_on(item, hidden, shown)
         if turning_off:
             ok = xbmcgui.Dialog().yesno(
                 "Menu items",
@@ -1049,6 +1187,15 @@ def menu_items_screen():
                 "Nothing is deleted. It can be switched back on here at any "
                 "time." % label,
                 nolabel="Keep it", yeslabel="Hide it")
+        elif item.get("default_off"):
+            # Say where it already is. Somebody looking for a console has not
+            # lost it, and pinning one to the home screen is a preference
+            # rather than a repair.
+            ok = xbmcgui.Dialog().yesno(
+                "Menu items",
+                "Put [B]%s[/B] on the home menu of its own?\n\n"
+                "It is already there under CONSOLES." % label,
+                nolabel="Leave it off", yeslabel="Pin it")
         else:
             ok = xbmcgui.Dialog().yesno(
                 "Menu items",
@@ -1056,11 +1203,11 @@ def menu_items_screen():
                 nolabel="Leave it off", yeslabel="Show it")
         if not ok:
             continue
-        if turning_off:
-            hidden.add(key)
+        if item.get("default_off"):
+            shown.discard(key) if turning_off else shown.add(key)
         else:
-            hidden.discard(key)
-        if write_hidden_menu(hidden):
+            hidden.add(key) if turning_off else hidden.discard(key)
+        if write_menu_switches(hidden, shown):
             changed = True
 
     if changed:
@@ -1071,29 +1218,248 @@ def menu_items_screen():
                         "Rebuilding the menu.\n\nThe screen will flicker "
                         "when the skin reloads.")
         try:
-            subprocess.call([MENU_BUILDER])
-        except OSError:
+            follow([MENU_BUILDER], progress, "Menu items", MENU_MARKS,
+                   expect=45.0, timeout=180)
+        except (OSError, subprocess.SubprocessError):
             pass
         progress.close()
 
 
-def read_hidden_menu():
+def read_menu_switches():
+    """(switched off, switched on) -- kodi_menu.py reads the same two lists.
+
+    Two lists because the two defaults both exist. Most rows are on until
+    somebody switches them off. Each individual console is off until somebody
+    switches it on, because CONSOLES is where they all are now; remembering
+    that in the same "hidden" list would make an empty file mean "every
+    console on the home screen", which is the layout this replaced.
+    """
     try:
         with open(MENU_HIDDEN) as fh:
-            return set(json.load(fh).get("hidden", []))
+            data = json.load(fh)
     except (OSError, ValueError):
-        return set()
+        data = {}
+    return set(data.get("hidden", [])), set(data.get("shown", []))
 
 
-def write_hidden_menu(hidden):
+def read_hidden_menu():
+    return read_menu_switches()[0]
+
+
+def row_on(item, hidden, shown):
+    """Whether this row is on the home menu as things stand."""
+    if item.get("fixed"):
+        return True
+    if item.get("default_off"):
+        return item.get("key") in shown
+    return item.get("key") not in hidden
+
+
+def write_menu_switches(hidden, shown):
     try:
         os.makedirs(os.path.dirname(MENU_HIDDEN), exist_ok=True)
         with open(MENU_HIDDEN, "w") as fh:
-            json.dump({"hidden": sorted(hidden)}, fh, indent=2)
+            json.dump({"hidden": sorted(hidden), "shown": sorted(shown)},
+                      fh, indent=2)
     except OSError as err:
         xbmcgui.Dialog().ok("Menu items", "Could not save: %s" % err)
         return False
     return True
+
+
+RA_CFG = os.path.expanduser("~/.config/retroarch/retroarch.cfg")
+# RetroAchievements' own endpoint, the one RetroArch itself logs in against.
+# A username and password go in; a username and a long-lived token come back,
+# and it is the token that gets stored -- the password is never written down.
+CHEEVOS_HOST = "https://retroachievements.org/dorequest.php"
+
+
+def ra_setting(key, default=""):
+    """One value out of retroarch.cfg."""
+    try:
+        with open(RA_CFG) as fh:
+            for line in fh:
+                name, sep, value = line.partition("=")
+                if sep and name.strip() == key:
+                    return value.strip().strip('"')
+    except OSError:
+        pass
+    return default
+
+
+def ra_settings_write(pairs):
+    """Merge keys into retroarch.cfg, leaving everything else alone.
+
+    This exists because config_save_on_exit is off, and has to stay off: with
+    it on, the per-launch fragment the player picker hands RetroArch -- which
+    pad is which player, whether to skip the automatic save -- gets written
+    back into retroarch.cfg and becomes permanent. One "start fresh" disabled
+    automatic saving for every game afterwards, which is how that was found.
+
+    The cost of that is that nothing RetroArch's own menus change survives the
+    exit, and an account is one of the things its menus change: signing in to
+    RetroAchievements appeared to work, and the login was gone by the next
+    game. So the token is written from out here instead, by the same one-key-
+    at-a-time merge install.sh uses, and it stays.
+    """
+    try:
+        os.makedirs(os.path.dirname(RA_CFG), exist_ok=True)
+        try:
+            with open(RA_CFG) as fh:
+                lines = fh.read().splitlines()
+        except OSError:
+            lines = []
+        for key, value in sorted(pairs.items()):
+            want = '%s = "%s"' % (key, value)
+            for i, line in enumerate(lines):
+                name, sep, _rest = line.partition("=")
+                if sep and name.strip() == key:
+                    lines[i] = want
+                    break
+            else:
+                lines.append(want)
+        with open(RA_CFG, "w") as fh:
+            fh.write("\n".join(lines) + "\n")
+    except OSError as err:
+        xbmcgui.Dialog().ok("Achievements",
+                            "Could not write retroarch.cfg:\n\n%s" % err)
+        return False
+    return True
+
+
+def cheevos_login(user, password):
+    """Ask RetroAchievements for a token. Returns (token, error)."""
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+    body = urllib.parse.urlencode({"r": "login2", "u": user,
+                                   "p": password}).encode()
+    # RetroAchievements rejects a request with no User-Agent, and the error it
+    # gives for that says nothing about user agents.
+    request = urllib.request.Request(
+        CHEEVOS_HOST, data=body,
+        headers={"User-Agent": "kodi-retrobox/1.0",
+                 "Content-Type": "application/x-www-form-urlencoded"})
+    try:
+        with urllib.request.urlopen(request, timeout=20) as answer:
+            data = json.loads(answer.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as err:
+        # The interesting failures -- an unverified email among them -- come
+        # back as a 4xx with the reason in the body, so read it rather than
+        # reporting the status code and throwing the explanation away.
+        try:
+            data = json.loads(err.read().decode("utf-8", "replace"))
+        except (ValueError, OSError):
+            return "", "%s %s" % (err.code, err.reason)
+    except (urllib.error.URLError, OSError) as err:
+        return "", "could not reach retroachievements.org: %s" % err
+    except ValueError:
+        return "", "retroachievements.org sent something that is not an answer"
+    if data.get("Success") and data.get("Token"):
+        return data["Token"], ""
+    return "", str(data.get("Error")
+                   or data.get("Status")
+                   or "the site refused the login and did not say why")
+
+
+def cheevos_screen():
+    """Sign in to RetroAchievements, from the sofa, so that it sticks."""
+    while True:
+        user = ra_setting("cheevos_username")
+        token = ra_setting("cheevos_token")
+        signed_in = bool(user and token)
+        rows = ["Sign in" if not signed_in else "Sign in as somebody else",
+                "Sign out",
+                "Hardcore mode:  %s"
+                % ("ON" if ra_setting("cheevos_hardcore_mode_enable") == "true"
+                   else "off"),
+                "Close"]
+        heading = ("Achievements -- signed in as %s" % user if signed_in
+                   else "Achievements -- not signed in")
+        pick = xbmcgui.Dialog().select(heading, rows)
+        if pick in (-1, 3):
+            return
+        if pick == 0:
+            if game_running_now():
+                xbmcgui.Dialog().ok(
+                    "Achievements",
+                    "A game is running. Close it first -- RetroArch reads "
+                    "this file when it starts, and would write over this "
+                    "when it exits.")
+                continue
+            name = xbmcgui.Dialog().input("RetroAchievements username",
+                                          user or "")
+            if not name:
+                continue
+            password = xbmcgui.Dialog().input(
+                "Password for %s" % name, "",
+                option=xbmcgui.ALPHANUM_HIDE_INPUT)
+            if not password:
+                continue
+            new_token, problem = cheevos_login(name, password)
+            if problem:
+                xbmcgui.Dialog().ok(
+                    "Achievements",
+                    "RetroAchievements would not sign %s in:\n\n[B]%s[/B]\n\n"
+                    "That is the site's own answer, word for word."
+                    % (name, problem))
+                continue
+            # cheevos_password is cleared as well: RetroArch will happily keep
+            # one there, and there is no reason for this machine to hold a
+            # password once it has a token.
+            if ra_settings_write({"cheevos_username": name,
+                                  "cheevos_token": new_token,
+                                  "cheevos_password": "",
+                                  "cheevos_enable": "true"}):
+                xbmcgui.Dialog().ok(
+                    "Achievements",
+                    "Signed in as [B]%s[/B].\n\nThis is written into "
+                    "retroarch.cfg, so it survives closing a game -- which "
+                    "signing in from RetroArch's own menu does not." % name)
+        elif pick == 1:
+            if not signed_in:
+                continue
+            if xbmcgui.Dialog().yesno("Achievements",
+                                      "Sign [B]%s[/B] out?" % user,
+                                      nolabel="Stay signed in",
+                                      yeslabel="Sign out"):
+                ra_settings_write({"cheevos_username": "",
+                                   "cheevos_token": "",
+                                   "cheevos_password": ""})
+        elif pick == 2:
+            on = ra_setting("cheevos_hardcore_mode_enable") == "true"
+            if not on and not xbmcgui.Dialog().yesno(
+                    "Achievements",
+                    "Hardcore mode disables save states.\n\nThat is what "
+                    "CONTINUE and carrying a game across a change of players "
+                    "are built on, so both stop working.",
+                    nolabel="Leave it off", yeslabel="Turn it on"):
+                continue
+            ra_settings_write({"cheevos_hardcore_mode_enable":
+                               "false" if on else "true"})
+
+
+def game_running_now():
+    """Whether RetroArch or the player picker is up.
+
+    Exact process names, for the same reason stop_stuck_game uses them: this
+    add-on is called plugin.program.retroarch, so `pgrep -f retroarch` finds
+    the very screen asking the question. The picker is a script rather than a
+    process of its own, so it is matched on its own basename with -x against
+    python3's argv[0] -- which is why it needs the -f form and a pattern that
+    cannot match anything else.
+    """
+    try:
+        if subprocess.run(["pgrep", "-x", "retroarch"],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                          check=False).returncode == 0:
+            return True
+        return subprocess.run(["pgrep", "-f", "bin/ra_players.py"],
+                              stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL,
+                              check=False).returncode == 0
+    except OSError:
+        return False
 
 
 def settings_screen():
@@ -1109,6 +1475,7 @@ def settings_screen():
             "Start Kodi at login:  %s" % ("ON" if autostart_on() else "off"),
             "Restart Kodi if it crashes:  %s" % ("ON" if restart else "off"),
             "Enable or disable menu items",
+            "Achievements:  %s" % (ra_setting("cheevos_username") or "not signed in"),
             "Run the game sync now",
             "Stop a game that will not close",
             "Update this console",
@@ -1117,7 +1484,7 @@ def settings_screen():
             "Close",
         ]
         pick = xbmcgui.Dialog().select("Settings", rows)
-        if pick in (-1, 8):
+        if pick in (-1, 9):
             return
         if pick == 0:
             wanted = not autostart_on()
@@ -1140,17 +1507,19 @@ def settings_screen():
         elif pick == 2:
             menu_items_screen()
         elif pick == 3:
+            cheevos_screen()
+        elif pick == 4:
             sync_games_now()
             return
-        elif pick == 4:
-            stop_stuck_game()
         elif pick == 5:
+            stop_stuck_game()
+        elif pick == 6:
             update_system()
             return
-        elif pick == 6:
+        elif pick == 7:
             restore_backup()
             return
-        elif pick == 7:
+        elif pick == 8:
             # Otherwise the only way in is the S key, which a console with no
             # keyboard does not have.
             xbmc.executebuiltin("ActivateWindow(Settings)")
@@ -1185,7 +1554,7 @@ def remove_pc_game(game_id):
         return
     if write_pc_games([g for g in games if g.get("id") != game_id]):
         xbmcgui.Dialog().notification("Removed", name,
-                                      xbmcgui.NOTIFICATION_INFO)
+                                      xbmcgui.NOTIFICATION_INFO, sound=False)
         xbmc.executebuiltin("Container.Refresh")
 
 
@@ -1236,7 +1605,7 @@ def set_pc_art(game_id):
     game["art"] = dest
     if write_pc_games(games):
         xbmcgui.Dialog().notification("Picture set", name,
-                                      xbmcgui.NOTIFICATION_INFO)
+                                      xbmcgui.NOTIFICATION_INFO, sound=False)
         xbmc.executebuiltin("Container.Refresh")
 
 
@@ -1252,7 +1621,8 @@ def rename_pc_game(game_id):
     # it would silently drop the game back to the default pad layout.
     game["name"] = new
     if write_pc_games(games):
-        xbmcgui.Dialog().notification("Renamed", new, xbmcgui.NOTIFICATION_INFO)
+        xbmcgui.Dialog().notification("Renamed", new,
+                                      xbmcgui.NOTIFICATION_INFO, sound=False)
         xbmc.executebuiltin("Container.Refresh")
 
 
@@ -1265,9 +1635,8 @@ def sync_games_now():
     progress = xbmcgui.DialogProgressBG()
     progress.create("Games", "Looking for new games")
     try:
-        done = subprocess.run([sync], stdout=subprocess.PIPE,
-                              stderr=subprocess.STDOUT, timeout=900)
-        out = done.stdout.decode("utf-8", "replace")
+        code, out = follow([sync], progress, "Games", SYNC_MARKS,
+                           expect=90.0, timeout=900)
     except (OSError, subprocess.SubprocessError) as err:
         progress.close()
         xbmcgui.Dialog().ok("Sync Games", "The sync did not run: %s" % err)
@@ -1275,14 +1644,14 @@ def sync_games_now():
     progress.close()
     # Its last useful line is the summary; a failure is worth showing in full.
     lines = [l for l in out.splitlines() if l.strip()]
-    if done.returncode != 0:
+    if code != 0:
         xbmcgui.Dialog().textviewer("Sync Games", out or "no output",
                                     usemono=True)
     else:
         summary = next((l for l in reversed(lines)
                         if l.startswith("menu ")), lines[-1] if lines else "done")
         xbmcgui.Dialog().notification("Sync", summary,
-                                      xbmcgui.NOTIFICATION_INFO)
+                                      xbmcgui.NOTIFICATION_INFO, sound=False)
     xbmc.executebuiltin("Container.Refresh")
 
 
@@ -1407,7 +1776,7 @@ def add_pc_game():
         "~/.config/JoyShockMapper/games/%s.txt" % entry["id"])
     dialog.notification("Added", "%s%s" % (
         name, "" if os.path.exists(mapping) else " (default pad mapping)"),
-        xbmcgui.NOTIFICATION_INFO)
+        xbmcgui.NOTIFICATION_INFO, sound=False)
     xbmc.executebuiltin("Container.Refresh")
 
 
@@ -1417,7 +1786,7 @@ def launch_pc(game_id):
             argv = [os.path.expanduser(a) for a in (game.get("exec") or [])]
             if not argv or not os.path.exists(argv[0]):
                 xbmcgui.Dialog().notification("PC Game", "Executable not found",
-                                              xbmcgui.NOTIFICATION_ERROR)
+                                              xbmcgui.NOTIFICATION_ERROR, sound=False)
                 return
             wrapped = [PC_LAUNCHER,
                        "--match", game.get("window") or game.get("name", game_id)]
@@ -1436,7 +1805,7 @@ def launch_pc(game_id):
             run(wrapped, game.get("name", game_id), cwd=game.get("cwd"))
             return
     xbmcgui.Dialog().notification("PC Game", "Unknown game: %s" % game_id,
-                                  xbmcgui.NOTIFICATION_ERROR)
+                                  xbmcgui.NOTIFICATION_ERROR, sound=False)
 
 
 def main():
@@ -1478,6 +1847,9 @@ def main():
         settings_screen()
     elif args.get("pcgame"):
         launch_pc(args["pcgame"])
+    elif args.get("notify"):
+        show_notice(args.get("title", ""), args.get("message", ""),
+                    args.get("seconds", 12000))
     elif args.get("open"):
         run([PICKER, "-f"], "RetroArch")
     elif args.get("system"):

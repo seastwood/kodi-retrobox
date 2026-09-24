@@ -62,7 +62,7 @@ panel.
 
     bin/         the scripts, symlinked into ~/.local/bin
     addons/      two hand-written Kodi add-ons, symlinked into ~/.kodi/addons
-    tests/       twenty suites, 429 checks, symlinked to ~/.local/share/gametests
+    tests/       thirty-one suites, symlinked to ~/.local/share/gametests
     assets/      the pixel font and the menu icons
     templates/   the RetroArch settings this console sets
     system/      what to install: packages, PPAs, cores, BIOS notes, units
@@ -342,7 +342,8 @@ This repository itself is MIT licensed — see [LICENSE](LICENSE).
 **Nothing personal, either.** No credentials, no accounts, no game library:
 this machine's own configuration and secrets are git-ignored and carried by the
 backup instead. Achievements are switched on but have no account attached — add
-yours in RetroArch's own menu. Backups are switched off until you name a
+yours under *Settings → Achievements* on the Kodi menu, which signs in and
+stores the token where a game cannot overwrite it. Backups are switched off until you name a
 destination in `backup/backup.conf`.
 
 ## Backups

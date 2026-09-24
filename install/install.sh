@@ -427,6 +427,42 @@ else
   warn "no settings template; RetroArch will use its own defaults"
 fi
 
+# Controller profiles. joypad_autoconfig_dir *replaces* RetroArch's packaged
+# set rather than adding to it, so without this the 700-odd profiles the
+# libretro package ships are never read and a pad with a perfectly good
+# profile arrives in a game with nothing bound. Copied rather than symlinked:
+# RetroArch writes into this directory itself when somebody saves a profile,
+# and it must be writing a file of its own, not through a link into /usr.
+#
+# Never overwrites. A profile already here was either saved on this machine or
+# copied by an earlier run, and in both cases it is the one to keep.
+AUTOCONF="$TARGET_HOME/.config/retroarch/autoconfig"
+PACKAGED_AUTOCONF="/usr/share/libretro/autoconfig"
+if [ "$DRY" = 1 ]; then
+  skip "would copy in $(find "$PACKAGED_AUTOCONF" -name '*.cfg' 2>/dev/null | wc -l) controller profiles"
+elif [ -d "$PACKAGED_AUTOCONF" ]; then
+  mkdir -p "$AUTOCONF"
+  copied=0
+  # -maxdepth 2: RetroArch files these by input driver on some builds
+  # (autoconfig/udev/Some Pad.cfg) and flat on others. Both end up flat here,
+  # which is where RetroArch looks.
+  while IFS= read -r prof; do
+    dest="$AUTOCONF/$(basename "$prof")"
+    [ -e "$dest" ] && continue
+    cp "$prof" "$dest" 2>/dev/null && copied=$((copied+1))
+  done <<EOF
+$(find "$PACKAGED_AUTOCONF" -maxdepth 2 -name '*.cfg' 2>/dev/null)
+EOF
+  have=$(find "$AUTOCONF" -maxdepth 1 -name '*.cfg' 2>/dev/null | wc -l)
+  if [ "$copied" -gt 0 ]; then
+    ok "$copied controller profiles copied in ($have available)"
+  else
+    ok "$have controller profiles already in place"
+  fi
+else
+  warn "no packaged controller profiles; install libretro's autoconfig set"
+fi
+
 # This machine's own captured state, if there is any. A fresh clone has none --
 # it is deliberately not published -- and a restore from backup provides it.
 LOCAL="$REPO/local"
@@ -751,9 +787,10 @@ cat <<'EOF'
    Wine and builds JoyShockMapper, and games are declared in
    ~/.local/share/pcgames.json (which explains itself).
 
-   Achievements are switched on but have no account -- add yours in RetroArch's
-   own menu. Backups do nothing until you name a destination in
-   backup/backup.conf.
+   Achievements are switched on but have no account -- add yours under
+   Settings > Achievements on the Kodi menu, which signs in and stores the
+   token where a game cannot overwrite it. Backups do nothing until you name
+   a destination in backup/backup.conf.
 EOF
 
 echo

@@ -25,6 +25,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.parse
 
 import evdev
 import pygame
@@ -279,14 +280,22 @@ def diagnose(path, code, seconds, asked=False):
 
 
 def notify(title, message):
-    """Put it on the television. Kodi is what the player is looking at."""
+    """Put it on the television, quietly. Kodi is what the player is looking at.
+
+    Through the add-on rather than Kodi's Notification() builtin, which has no
+    way to ask for silence: every one of these rang the notification chime,
+    including the one that goes up as a game starts, which is the moment the
+    game's own music is beginning. Commas are percent-encoded because Kodi
+    splits a builtin's arguments on them.
+    """
     if not os.path.exists(KODI_SEND):
         return
-    # Kodi's builtins split their arguments on commas.
-    clean = message.replace(",", " ").replace('"', "")
+    query = urllib.parse.urlencode({"notify": "1", "title": str(title),
+                                    "message": str(message)[:180],
+                                    "seconds": "12000"})
+    action = "RunPlugin(plugin://plugin.program.retroarch/?%s)" % query
     try:
-        subprocess.run([KODI_SEND, "--host=127.0.0.1",
-                        "--action=Notification(%s,%s,12000)" % (title, clean)],
+        subprocess.run([KODI_SEND, "--host=127.0.0.1", "--action=" + action],
                        timeout=10, stdout=subprocess.DEVNULL,
                        stderr=subprocess.DEVNULL)
     except (OSError, subprocess.TimeoutExpired):
@@ -677,6 +686,79 @@ def log_line(message):
         pass
 
 
+# Only one launch at a time. Two of these running at once means two RetroArch
+# instances fighting over the display, and what that looks like from the sofa
+# is a game nobody chose starting, closing a moment later, and then the game
+# that was chosen starting -- which is exactly how it was reported.
+#
+# The cause does not have to be known to be fixed: whatever produces the second
+# launch -- a press that registered twice, CONTINUE going off beside the game
+# that was picked, a launch arriving while the last game is still closing -- a
+# second launcher must supersede the first rather than run beside it. It does
+# that here, before either has told RetroArch to start anything, which is what
+# keeps the wrong game off the screen instead of merely taking it away again.
+LAUNCH_LOCK = os.path.expanduser("~/.local/state/retroarch/launching.lock")
+LOCK_WAIT = 12.0                 # how long to give the one already running
+_LOCK = [None]                   # kept alive for the life of the process
+
+
+def take_the_screen(what=""):
+    """Become the only launcher, ending any other that is already going.
+
+    Returns True once this process holds the lock, False if the one already
+    holding it would not let go -- in which case starting anyway is the thing
+    being prevented.
+    """
+    import fcntl
+    try:
+        os.makedirs(os.path.dirname(LAUNCH_LOCK), exist_ok=True)
+        handle = open(LAUNCH_LOCK, "a+")
+    except OSError:
+        return True                  # no lock file is no reason not to play
+    _LOCK[0] = handle
+    deadline = time.time() + LOCK_WAIT
+    asked = False
+    while True:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            pass
+        else:
+            handle.seek(0)
+            handle.truncate()
+            handle.write("%d %s\n" % (os.getpid(), what))
+            handle.flush()
+            return True
+        if not asked:
+            asked = True
+            holder = 0
+            try:
+                handle.seek(0)
+                first = handle.read(200).split(None, 1)
+                holder = int(first[0]) if first else 0
+                was = first[1].strip() if len(first) > 1 else ""
+            except (OSError, ValueError):
+                was = ""
+            log_line("another launcher (pid %s%s) has the screen; taking over "
+                     "for %s" % (holder or "?", ", " + was if was else "",
+                                 what or "a game"))
+            if holder:
+                # Its SIGTERM handler puts the screen blanking back and stops
+                # the emulator it started, so this is a clean handover rather
+                # than a kill.
+                try:
+                    os.kill(holder, signal.SIGTERM)
+                except OSError:
+                    pass
+        if time.time() > deadline:
+            log_line("the launcher already running would not give up the "
+                     "screen; not starting a second one")
+            notify("Already starting a game",
+                   "Something else is still opening. Try again in a moment.")
+            return False
+        time.sleep(0.2)
+
+
 def repick_asked():
     """Has anything outside asked for the player picker to come back?"""
     try:
@@ -916,6 +998,11 @@ def watch_hold_to_exit(stop, bar=None, repick=None, rom=""):
                 pass
 
 
+# The emulator this process started, so the signal handler that stands this
+# launcher down can stop it too rather than orphaning it on the television.
+CHILD = [None]
+
+
 def run_retroarch(args, override=None, shader=None, repick=None,
                   load_slot=None):
     """Start the game and stay alive long enough to see whether it worked.
@@ -939,7 +1026,27 @@ def run_retroarch(args, override=None, shader=None, repick=None,
     hold_screen_awake(saver)
     # Being killed must still put the screen back, and a `finally` will not
     # run for SIGTERM unless it is turned into an ordinary exception.
+    #
+    # It must take the emulator with it, too. A second launcher asks this one
+    # to stand down by sending it SIGTERM (see take_the_screen), and a handler
+    # that exits without stopping its own child leaves a RetroArch holding the
+    # television that nothing is watching any more -- which is worse than the
+    # double launch it was meant to cure. SIGTERM first, because RetroArch
+    # handles it: it flushes the cartridge save and writes the automatic save
+    # state, so the handover does not cost anybody their progress.
     def _bail(_signum, _frame):
+        child = CHILD[0]
+        if child is not None and child.poll() is None:
+            try:
+                child.terminate()
+                for _ in range(40):          # up to four seconds to save
+                    if child.poll() is not None:
+                        break
+                    time.sleep(0.1)
+                if child.poll() is None:
+                    child.kill()
+            except OSError:
+                pass
         restore_screen(saver)
         os._exit(1)
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
@@ -961,6 +1068,7 @@ def run_retroarch(args, override=None, shader=None, repick=None,
         with open(LAUNCH_LOG, "w") as log:
             child = subprocess.Popen(cmd, stdout=log,
                                      stderr=subprocess.STDOUT)
+            CHILD[0] = child
             resume = None
             resume_stop = threading.Event()
             if load_slot is not None:
@@ -983,6 +1091,7 @@ def run_retroarch(args, override=None, shader=None, repick=None,
         return 1
     finally:
         stop.set()
+        CHILD[0] = None
         restore_screen(saver)
     if repick is not None and repick.is_set():
         # Closed on purpose, to put the picker back over the same game. Not a
@@ -2278,6 +2387,10 @@ def main():
               "<retroarch args...>", file=sys.stderr)
         return 2
 
+    # Before anything is repaired, moved or handed back: all of that is state
+    # two launchers would be doing to each other at the same time.
+    if not take_the_screen(os.path.basename(rom_of(args) or "")):
+        return 0
     guard_config()
     restore_stale_state()
     # A note here means a previous run was borrowing somebody's save state and

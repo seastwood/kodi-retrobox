@@ -9,6 +9,7 @@ import glob
 import json
 import os
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -140,20 +141,28 @@ _listing_cache = {}
 KODI_SEND = "/usr/bin/kodi-send"
 
 
-def tell_kodi(title, message):
-    """Put a problem on the television.
+def tell_kodi(title, message, seconds=12):
+    """Put a problem on the television, without making a noise about it.
 
     This runs from a timer every ten minutes and its output goes to the journal,
     where nobody will ever see it. Anything that stops games appearing -- a
     crash here, a playlist pointing at a core that is gone -- has to say so
     where the person using the machine is actually looking.
+
+    Not Kodi's Notification() builtin, which has no way to ask for silence:
+    every one of these rang the notification sound over whatever was on. The
+    add-on's notify route is the same popup raised through the Python API,
+    where sound=False is an argument. Commas are percent-encoded because Kodi
+    splits a builtin's arguments on them.
     """
     if not os.path.exists(KODI_SEND):
         return
-    clean = str(message).replace(",", " ").replace('"', "")[:180]
+    query = urllib.parse.urlencode({"notify": "1", "title": str(title),
+                                    "message": str(message)[:180],
+                                    "seconds": str(int(seconds) * 1000)})
+    action = "RunPlugin(plugin://plugin.program.retroarch/?%s)" % query
     try:
-        subprocess.run([KODI_SEND, "--host=127.0.0.1",
-                        "--action=Notification(%s,%s,12000)" % (title, clean)],
+        subprocess.run([KODI_SEND, "--host=127.0.0.1", "--action=" + action],
                        timeout=10, stdout=subprocess.DEVNULL,
                        stderr=subprocess.DEVNULL)
     except (OSError, subprocess.TimeoutExpired):
@@ -674,6 +683,19 @@ def disc_sets():
     going back to Kodi to launch "Disc 2" -- which does not work anyway, since
     the save is on the running instance.
 
+    The discs of one game are grouped across the whole system folder, not
+    within each directory of it. A four-disc set is very often unpacked one
+    disc per folder -- one archive per disc is how they are distributed -- and
+    grouping per directory then saw four games of one disc each. "The Legend
+    of Dragoon is missing a disc" went up on the television every ten minutes
+    for a game with all four of its discs sitting right there, and the .m3u
+    that would have made it playable as one game was never written.
+
+    So the .m3u goes at the deepest folder that holds all of the discs, and
+    names them relative to itself -- RetroArch resolves an .m3u's entries
+    against the .m3u's own directory, so a set spread over subfolders joins up
+    exactly as a flat one does.
+
     Returns (m3us written, complaints, disc files an m3u now covers).
     """
     made, missing, covered = [], [], set()
@@ -681,8 +703,10 @@ def disc_sets():
         folder = os.path.join(ROMS, entry)
         if not os.path.isdir(folder):
             continue
+        groups = {}
         for dirpath, _dirs, files in os.walk(folder):
-            groups = {}
+            if not_a_game_folder(dirpath):
+                continue
             for name in sorted(files):
                 stem, _dot, ext = name.rpartition(".")
                 if ext.lower() not in DISC_EXTS:
@@ -691,25 +715,30 @@ def disc_sets():
                 if not match:
                     continue
                 key = (match.group("base"), match.group("rest"), ext.lower())
-                groups.setdefault(key, []).append((int(match.group("n")), name))
-            for (base, rest, _ext), discs in sorted(groups.items()):
-                discs.sort()
-                label = ("%s %s" % (base, rest)).strip()
-                if len(discs) < 2:
-                    missing.append("%s: only disc %d is here, so it cannot be "
-                                   "finished" % (label, discs[0][0]))
-                    continue
-                want = "".join(name + "\n" for _n, name in discs)
-                path = os.path.join(dirpath, base + ".m3u")
-                try:
-                    current = open(path).read()
-                except OSError:
-                    current = None
-                if current != want:
-                    with open(path, "w") as fh:
-                        fh.write(want)
-                    made.append("%s (%d discs)" % (label, len(discs)))
-                covered.update(os.path.join(dirpath, name) for _n, name in discs)
+                groups.setdefault(key, {}).setdefault(
+                    int(match.group("n")), os.path.join(dirpath, name))
+        for (base, rest, _ext), discs in sorted(groups.items()):
+            label = ("%s %s" % (base, rest)).strip()
+            paths = [discs[n] for n in sorted(discs)]
+            if len(paths) < 2:
+                missing.append("%s: only disc %d is here, so it cannot be "
+                               "finished" % (label, sorted(discs)[0]))
+                continue
+            # The shallowest folder that contains every disc. For a flat set
+            # that is the folder they are all in, so nothing moves.
+            home = os.path.commonpath(
+                [os.path.dirname(p) for p in paths])
+            want = "".join(os.path.relpath(p, home) + "\n" for p in paths)
+            path = os.path.join(home, base + ".m3u")
+            try:
+                current = open(path).read()
+            except OSError:
+                current = None
+            if current != want:
+                with open(path, "w") as fh:
+                    fh.write(want)
+                made.append("%s (%d discs)" % (label, len(paths)))
+            covered.update(paths)
     return made, missing, covered
 
 
@@ -1034,10 +1063,97 @@ def game_running():
     return False
 
 
+# Controller profiles. joypad_autoconfig_dir *replaces* the packaged set
+# rather than adding to it -- RetroArch has no search path for these -- so
+# naming a directory of our own hid every profile the libretro package ships.
+# A Switch Pro Controller, which has a profile in that set under exactly the
+# name the kernel reports, therefore arrived in a game with nothing bound and
+# had to be mapped by hand.
+#
+# install.sh copies them in; this keeps it true afterwards, so a profile added
+# by a package update turns up without anybody re-running the install.
+PACKAGED_AUTOCONFIG = "/usr/share/libretro/autoconfig"
+USER_AUTOCONFIG = os.path.expanduser("~/.config/retroarch/autoconfig")
+
+
+def seed_autoconfig():
+    """Copy packaged controller profiles in, never over one already there.
+
+    A file already in this directory was either saved on this machine -- which
+    is what RetroArch's own "Save Controller Profile" writes -- or copied by an
+    earlier run. Both are the version to keep, so this only ever adds.
+    """
+    if not os.path.isdir(PACKAGED_AUTOCONFIG):
+        return 0
+    try:
+        os.makedirs(USER_AUTOCONFIG, exist_ok=True)
+        have = set(os.listdir(USER_AUTOCONFIG))
+    except OSError:
+        return 0
+    copied = 0
+    # One level down as well: some builds file these by input driver, as
+    # autoconfig/udev/Some Pad.cfg. They all land flat here, which is the only
+    # shape RetroArch reads from the directory it is pointed at.
+    for root in [PACKAGED_AUTOCONFIG] + [
+            os.path.join(PACKAGED_AUTOCONFIG, name)
+            for name in sorted(os.listdir(PACKAGED_AUTOCONFIG))
+            if os.path.isdir(os.path.join(PACKAGED_AUTOCONFIG, name))]:
+        try:
+            names = sorted(os.listdir(root))
+        except OSError:
+            continue
+        for name in names:
+            if not name.endswith(".cfg") or name in have:
+                continue
+            try:
+                shutil.copyfile(os.path.join(root, name),
+                                os.path.join(USER_AUTOCONFIG, name))
+            except OSError:
+                continue
+            have.add(name)
+            copied += 1
+    return copied
+
+
+# The last set of incomplete games somebody was told about. Without it the
+# same complaint went up every ten minutes for as long as the disc was
+# missing, which on a shelf of games that are never going to be completed is
+# for ever. A complaint is worth making when it is news.
+COMPLAINED = os.path.expanduser("~/.local/state/sync_games.discs.json")
+
+
+def told_about_discs(incomplete):
+    """Say which games are missing discs, but only when the answer changed."""
+    now = sorted(set(line.split(":")[0] for line in incomplete))
+    try:
+        before = json.load(open(COMPLAINED)).get("incomplete", [])
+    except (OSError, ValueError):
+        before = None                 # never asked before: this is news
+    if before == now:
+        return False
+    try:
+        os.makedirs(os.path.dirname(COMPLAINED), exist_ok=True)
+        json.dump({"incomplete": now}, open(COMPLAINED, "w"), indent=2)
+    except OSError:
+        pass
+    fresh = [name for name in now if not before or name not in before]
+    if not fresh:
+        return False                  # a set that only got smaller is good news
+    if len(fresh) == 1:
+        tell_kodi("Incomplete game", "%s is missing a disc" % fresh[0])
+    else:
+        tell_kodi("Incomplete games",
+                  "%s and %d more are missing discs" % (fresh[0], len(fresh) - 1))
+    return True
+
+
 def main():
     if game_running():
         log("a game or the player picker is running - skipping this sync")
         return
+    added = seed_autoconfig()
+    if added:
+        log("controller profiles copied in: %d" % added)
     # Before the scan, so a newly written .m3u is what gets picked up.
     made, incomplete, covered = disc_sets()
     for line in made:
@@ -1068,9 +1184,7 @@ def main():
         names = ", ".join(sorted(set(broken)))
         log("playlists that will not load: %s" % names)
         tell_kodi("Games will not launch", "%s: the emulator core is missing" % names)
-    if incomplete:
-        tell_kodi("Incomplete game", incomplete[0].split(":")[0] +
-                  " is missing a disc")
+    told_about_discs(incomplete)
     players = player_counts()
     if players:
         log("player counts: %d of %d games" % players)

@@ -191,7 +191,12 @@ game, and the CONTROLLER entry on the Kodi home menu edits those mappings with
 a controller, so it needs no keyboard either.
 
 **Achievements.** RetroAchievements is switched on but has no account — add
-yours in RetroArch's own menu. Nothing in this repository carries credentials.
+yours under *Settings → Achievements* on the Kodi menu. Not in RetroArch's own
+menu: `config_save_on_exit` is off here, deliberately, so nothing RetroArch's
+menus change survives the exit and an account signed in there is gone by the
+next game. The Kodi screen fetches the account's token itself and writes it
+into `retroarch.cfg`, where it stays. Nothing in this repository carries
+credentials.
 
 **USB over IP** borrows a controller plugged into another machine. Run
 `sudo ~/.kodi/addons/script.usbip/bin/usbip-setup-root.sh` once; see the

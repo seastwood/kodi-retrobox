@@ -44,7 +44,7 @@ def pick(heading, values, current=None):
 def notify(message, error=False):
     icon = (xbmcgui.NOTIFICATION_ERROR if error
             else xbmcgui.NOTIFICATION_INFO)
-    xbmcgui.Dialog().notification(TITLE, message, icon, 3000)
+    xbmcgui.Dialog().notification(TITLE, message, icon, 3000, sound=False)
 
 
 def ask_text(heading, default=""):

@@ -14,6 +14,7 @@ import re
 import select
 import struct
 import subprocess
+import urllib.parse
 import sys
 import time
 
@@ -530,8 +531,13 @@ def main():
 
     if already_running(cmd[0]):
         # A second instance fights the first for the display and input.
-        subprocess.run(["kodi-send", "--host=127.0.0.1",
-                        "--action=Notification(PC Game,Already running,3000)"],
+        # Through the add-on rather than Kodi's Notification() builtin, which
+        # has no way to ask for silence -- see sync_games.py's tell_kodi.
+        query = urllib.parse.urlencode({"notify": "1", "title": "PC Game",
+                                        "message": "Already running",
+                                        "seconds": "3000"})
+        action = "RunPlugin(plugin://plugin.program.retroarch/?%s)" % query
+        subprocess.run(["kodi-send", "--host=127.0.0.1", "--action=" + action],
                        check=False, stdout=subprocess.DEVNULL,
                        stderr=subprocess.DEVNULL)
         return 0

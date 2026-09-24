@@ -44,12 +44,30 @@ CATALOGUE = os.path.expanduser("~/.local/state/menu-items.json")
 ALWAYS = {"settings"}
 
 
-def hidden_keys():
+def _switches():
+    """What somebody has switched off, and what they have switched on.
+
+    Two lists rather than one because the two defaults both exist. Most rows
+    are on until switched off, so they are remembered in "hidden". The
+    individual consoles are off until switched on -- they live behind the
+    CONSOLES row now -- so they are remembered in "shown", and an empty file
+    means every console is behind the one row rather than none of them being
+    anywhere.
+    """
     try:
         with open(HIDDEN) as fh:
-            return set(json.load(fh).get("hidden", []))
+            data = json.load(fh)
     except (OSError, ValueError):
-        return set()
+        data = {}
+    return set(data.get("hidden", [])), set(data.get("shown", []))
+
+
+def hidden_keys():
+    return _switches()[0]
+
+
+def shown_keys():
+    return _switches()[1]
 
 
 def short(system):
@@ -71,7 +89,7 @@ def sc(default_id, label, action, icon, label2="", props=None):
 
 
 def offer(out, seen, key, default_id, label, action, icon, label2="",
-          props=None):
+          props=None, default_off=False):
     """Record a menu item, and add it unless somebody has switched it off.
 
     `key` is what the switch is remembered against and is not the defaultID.
@@ -81,8 +99,12 @@ def offer(out, seen, key, default_id, label, action, icon, label2="",
     The key is the system's own name, which does not move.
     """
     seen.append({"key": key, "label": label, "hint": label2,
-                 "fixed": key in ALWAYS})
-    if key in ALWAYS or key not in hidden_keys():
+                 "fixed": key in ALWAYS, "default_off": bool(default_off)})
+    if default_off:
+        on = key in shown_keys()
+    else:
+        on = key in ALWAYS or key not in hidden_keys()
+    if on:
         out.append(sc(default_id, label, action, icon, label2, props))
 
 
@@ -144,7 +166,12 @@ def build():
         offer(out, seen, ident, ident, label, "ActivateWindow(Games,%s,return)" % url,
                       icon, "%d GAMES" % len(games))
 
-    n = 0
+    # One row for every console, rather than one row per console. Eleven
+    # systems put eleven tiles on the home screen and pushed everything else
+    # off the end of it; they are a list, and a list belongs one level down.
+    # The add-on's own front page is already that list, so the row opens it
+    # and each console opens its games.
+    consoles = []
     for pl in sorted(glob.glob(os.path.join(PL, "*.lpl"))):
         system = os.path.basename(pl)[:-4]
         try:
@@ -153,14 +180,30 @@ def build():
             continue
         if not items:
             continue
+        consoles.append((system, len(items)))
+    n = len(consoles)
+    if consoles:
+        icon = os.path.join(ICON, "_consoles.png")
+        if not os.path.exists(icon):
+            # The first console's own icon is a better picture of "consoles"
+            # than a generic cartridge, and there is always at least one.
+            icon = os.path.join(ICON, consoles[0][0] + ".png")
+        if not os.path.exists(icon):
+            icon = SKINICON + "DefaultAddonGame.png"
+        offer(out, seen, "consoles", "consoles", "CONSOLES",
+                      "ActivateWindow(Games,plugin://plugin.program.retroarch/,return)",
+                      icon, "%d GAMES" % sum(c for _s, c in consoles))
+    # Each console is still offerable on its own, for pinning a favourite to
+    # the home screen -- off unless somebody asks for it, since CONSOLES is
+    # where they all are now.
+    for i, (system, count) in enumerate(consoles):
         url = "plugin://plugin.program.retroarch/?" + urlencode({"system": system})
         icon = os.path.join(ICON, system + ".png")
         if not os.path.exists(icon):
             icon = SKINICON + "DefaultAddonGame.png"
-        offer(out, seen, "console:" + system, "games-%d" % n, short(system),
+        offer(out, seen, "console:" + system, "games-%d" % i, short(system),
                       "ActivateWindow(Games,%s,return)" % url, icon,
-                      "%d GAMES" % len(items))
-        n += 1
+                      "%d GAMES" % count, default_off=True)
 
     # Every game that has a player count, browsable by how many people can
     # play it -- across all the consoles at once, which is the question being

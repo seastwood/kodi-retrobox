@@ -61,11 +61,17 @@ def a_console(folder, systems):
     return plists
 
 
-def menu(module, hidden=(), plists=None, folder=None):
-    """Build the menu with a given set of rows switched off."""
+def menu(module, hidden=(), plists=None, folder=None, shown=()):
+    """Build the menu with a given set of rows switched off, and on.
+
+    Two sets because the two defaults both exist: a row is on until it is in
+    `hidden`, but a single console is off until it is in `shown` -- the
+    consoles live behind the one CONSOLES row now, and are only pinned to the
+    home screen one at a time on purpose.
+    """
     module.HIDDEN = os.path.join(folder, "hidden.json")
     with open(module.HIDDEN, "w") as fh:
-        json.dump({"hidden": list(hidden)}, fh)
+        json.dump({"hidden": list(hidden), "shown": list(shown)}, fh)
     if plists:
         module.PL = plists
     xml, consoles, seen = module.build()
@@ -106,20 +112,47 @@ check(any(i["key"] == "settings" and i["fixed"] for i in seen),
       "and the screen is told it is fixed, so it can say so rather than "
       "silently ignoring a press")
 
+print("\nevery console is behind one row rather than being a row each")
+# Eleven systems put eleven tiles on the home screen and pushed everything
+# else off the end of it. They are a list, and a list belongs one level down.
+xml, labels, ids, seen = menu(km, plists=plists, folder=folder)
+check("CONSOLES" in labels, "there is a row for all of them, got %s" % labels)
+check("SATURN" not in labels and "PLAYSTATION" not in labels
+      and "GAMEBOY" not in labels,
+      "and not one of its own, got %s" % labels)
+check(sum(1 for i in seen if i["key"].startswith("console:")) == 3,
+      "all three are still offered, or none could ever be pinned back")
+check(all(i["default_off"] for i in seen if i["key"].startswith("console:")),
+      "and the screen is told they are off by default, so it can say where "
+      "they already are rather than calling them hidden")
+check(not any(i["default_off"] for i in seen if i["key"] == "consoles"),
+      "the row that holds them is an ordinary one, on until switched off")
+check("plugin://plugin.program.retroarch/," in xml,
+      "the row opens the add-on's own list of consoles")
+
+print("\nand one can still be pinned to the home screen on its own")
+xml, labels, ids, seen = menu(km, plists=plists, folder=folder,
+                              shown=["console:Sega - Saturn"])
+check("SATURN" in labels, "the pinned one is there, got %s" % labels)
+check("PLAYSTATION" not in labels and "GAMEBOY" not in labels,
+      "and only that one, got %s" % labels)
+check("CONSOLES" in labels, "the row holding the rest stays")
+
 print("\na choice about one console stays about that console")
-# Saturn is hidden, then a system that sorts before it arrives. Numbered ids
-# would now point at a different console; the name does not move.
-xml, labels, ids, seen = menu(km, ["console:Sega - Saturn"], plists, folder)
-check("SATURN" not in labels and "PLAYSTATION" in labels,
-      "the right one is hidden to begin with, got %s" % labels)
+# Saturn is pinned, then a system that sorts before it arrives. The ids are
+# numbered games-0, games-1 and so on in playlist order, so a preference
+# stored against the number would move to a different console; the name does
+# not move.
 bigger = a_console(folder, ["Nintendo - Game Boy", "Sega - Saturn",
                             "Sony - PlayStation", "Atari - 2600"])
-xml, labels, ids, seen = menu(km, ["console:Sega - Saturn"], bigger, folder)
-check("2600" in " ".join(labels), "the new console is on the menu")
-check("SATURN" not in labels,
-      "the hidden one is still Saturn after the renumbering")
-check("PLAYSTATION" in labels and "GAMEBOY" in labels,
-      "and nothing else was caught by it, got %s" % labels)
+xml, labels, ids, seen = menu(km, plists=bigger, folder=folder,
+                              shown=["console:Sega - Saturn"])
+check("SATURN" in labels,
+      "the pinned one is still Saturn after the renumbering, got %s" % labels)
+check("2600" not in " ".join(labels),
+      "and the new console did not inherit the choice")
+check(any(i["key"] == "console:Atari - 2600" for i in seen),
+      "though it is offered, so it can be pinned too")
 
 print("\nthe rows on the settings screen line up with what they do")
 source = open(os.path.join(ROOT, "addons", "plugin.program.retroarch",
