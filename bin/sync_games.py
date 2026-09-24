@@ -428,8 +428,22 @@ def fill_gaps(joined=()):
         system = folder_system.get(entry)
         core = CORES.get(system) if system else None
         if not core:
-            log("  no playlist covers %s/ - add the system to CORES in this "
-                "script and SHORT in kodi_menu.py" % entry)
+            # Only if there is actually something in it. install.sh makes an
+            # empty folder per line of systems.tsv and people make their own,
+            # and an empty one is not a problem to report -- `jesm/`, with
+            # nothing whatsoever in it, produced this complaint on every pass
+            # of a ten-minute timer.
+            #
+            # And say it to whoever owns the console rather than to whoever
+            # wrote the script. "Add the system to CORES in this script and
+            # SHORT in kodi_menu.py" is an instruction to edit two Python
+            # files, which is not a thing the person with the games on their
+            # disk should be asked to do, or can.
+            if any(files for _d, _ds, files in os.walk(path)):
+                log("  %s/ has files in it but is not a system this console "
+                    "knows. Rename it to one of the folders in "
+                    "system/systems.tsv -- install.sh makes one per system -- "
+                    "and the next sync will pick the games up." % entry)
             continue
         exts = core_extensions(core)
         if not exts:

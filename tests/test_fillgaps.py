@@ -149,12 +149,35 @@ again = m.fill_gaps()
 check(not again, "second run is a no-op, got %r" % again)
 
 print("-- a folder no playlist covers is reported, not silently dropped --")
+# With something in it. A folder with games this console cannot place is a
+# real problem and has to be said out loud; an empty one is not, and is
+# checked separately below.
 os.makedirs(os.path.join(roms, "dreamcast"))
+open(os.path.join(roms, "dreamcast", "Some Game (USA).gdi"), "wb").write(b"\0")
 lines = []
 m.log = lambda msg: lines.append(msg)
 m.fill_gaps()
 check(any("dreamcast" in l for l in lines),
       "said something about dreamcast/, got %r" % lines)
+said = " ".join(l for l in lines if "dreamcast" in l)
+check("CORES" not in said and "kodi_menu.py" not in said,
+      "and said it to whoever owns the console rather than to whoever wrote "
+      "the script -- editing two Python files is not something the person "
+      "with the games on their disk can be asked to do: %r" % said)
+check("systems.tsv" in said or "Rename" in said,
+      "naming something they can actually act on, got %r" % said)
+
+print("-- an empty folder is not a problem and is not reported --")
+# install.sh makes one empty folder per system, and people make their own.
+# An empty `jesm/` produced that complaint on every pass of a ten-minute
+# timer on a real machine.
+os.makedirs(os.path.join(roms, "jesm"))
+lines = []
+m.log = lambda msg: lines.append(msg)
+m.fill_gaps()
+check(not any("jesm" in l for l in lines),
+      "nothing was said about the empty folder, got %r"
+      % [l for l in lines if "jesm" in l])
 
 shutil.rmtree(tmp)
 print()
