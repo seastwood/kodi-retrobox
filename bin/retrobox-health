@@ -127,16 +127,39 @@ def main(argv=()):
     last_run = (out or "").strip()
     _code, log = run(["journalctl", "--user", "-u", "retro-backup.service",
                       "--since", "3 days ago", "--no-pager"], timeout=60)
-    if not last_run:
-        bad("backup-never", "the backup has never run. Fix: install.sh enables "
-                            "retro-backup.timer")
-    elif "nothing configured" in log:
+    # The *last* thing it said, not anything it has ever said. Reading three
+    # days of journal for a phrase means a fault that was fixed this morning
+    # goes on being reported until the old lines age out, which is exactly the
+    # crying-wolf this is built to avoid. Found by fixing ultra's backup and
+    # watching the check go on complaining about it.
+    verdict = ""
+    for line in (log or "").splitlines():
+        if "nothing configured" in line:
+            verdict = "unconfigured"
+        elif "backed up" in line:
+            verdict = "backed-up"
+        elif "cannot" in line or "failed" in line:
+            verdict = "failed"
+
+    timer_ready = unit_property("retro-backup.timer", "ActiveState") in (
+        "active", "waiting")
+    if not last_run and not verdict:
+        if timer_ready:
+            # Enabled and simply not due yet. A console installed this
+            # afternoon has not had a nightly backup, and saying so as a fault
+            # would be wrong on every fresh install.
+            note("the backup timer is set but has not run yet")
+        else:
+            bad("backup-never", "the backup has never run and no timer will "
+                                "run it. Fix: install.sh enables "
+                                "retro-backup.timer")
+    elif verdict == "unconfigured":
         # Exit status 0, nightly, for ever. This is the one that hid the longest.
         bad("backup-unconfigured",
             "the nightly backup runs and does nothing: there is no "
             "backup/backup.conf, so it has never saved a thing. "
             "Fix: copy backup/backup.conf.example and name a destination")
-    elif "backed up" in log:
+    elif verdict == "backed-up":
         kept = [l for l in log.splitlines() if "backed up" in l]
         ok("backed up %s" % (kept[-1].split("backed up", 1)[1].strip()[:60]
                              if kept else "recently"))
@@ -147,7 +170,7 @@ def main(argv=()):
             if where.startswith(HOME):
                 note("it is written to %s, which is this machine's own disk -- it "
                      "survives a deletion but not the disk" % where)
-    elif "failed" in log.lower():
+    elif verdict == "failed":
         bad("backup-failing", "the last backup reported a failure. "
                               "Fix: run bin/retro_backup.sh and read what it says")
     else:

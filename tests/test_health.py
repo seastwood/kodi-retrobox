@@ -99,6 +99,47 @@ said = dict(m.problems)["backup-unconfigured"]
 check("backup.conf" in said and "Fix:" in said,
       "and the line says what to do about it: %r" % said[:80])
 
+print("\n-- a fault that was fixed this morning is not still a fault --")
+# Three days of journal holds the old complaint as well as the new success.
+# Reading it for a phrase meant ultra went on being reported as unconfigured
+# for hours after it had been configured and had backed up.
+healthy()
+SCRIPT["-u retro-backup.service"] = (0,
+    "06:33:08 no /home/x/backup/backup.conf - nothing configured, doing nothing\n"
+    "14:17:00 backed up 134M to /srv/nas/2026-09-24\n")
+m.main(["--quiet"])
+check("backup-unconfigured" not in [k for k, _ in m.problems],
+      "the last line wins, not the worst line: %s" % [k for k, _ in m.problems])
+
+print("\n-- and the other way round --")
+healthy()
+SCRIPT["-u retro-backup.service"] = (0,
+    "00:02:29 backed up 477M to /srv/nas/2026-09-23\n"
+    "06:33:08 no /home/x/backup/backup.conf - nothing configured, doing nothing\n")
+m.main(["--quiet"])
+check("backup-unconfigured" in [k for k, _ in m.problems],
+      "a backup that has since stopped working is caught")
+
+print("\n-- a console installed this afternoon is not failing --")
+healthy()
+SCRIPT["ExecMainStartTimestamp"] = (0, "")
+SCRIPT["-u retro-backup.service"] = (0, "")
+m.main(["--quiet"])
+check("backup-never" not in [k for k, _ in m.problems],
+      "a timer that is set but not yet due is not a fault, got %s"
+      % [k for k, _ in m.problems])
+check(any("not run yet" in n for n in m.notes), "it is noted instead")
+
+print("\n-- but no timer at all is --")
+healthy()
+SCRIPT["ExecMainStartTimestamp"] = (0, "")
+SCRIPT["-u retro-backup.service"] = (0, "")
+SCRIPT["show retro-backup.timer"] = (0, "inactive")
+m.main(["--quiet"])
+check("backup-never" in [k for k, _ in m.problems],
+      "nothing will ever run it, so it is a fault, got %s"
+      % [k for k, _ in m.problems])
+
 print("\n-- a backup onto the machine's own disk is worth a word, not an alarm --")
 healthy()
 SCRIPT["-u retro-backup.service"] = (
