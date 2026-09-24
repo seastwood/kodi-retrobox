@@ -129,6 +129,32 @@ for row in rows(os.path.join(REPO, "system", "systems.tsv")):
 if not missing_cores:
     ok("every system with games has the core it needs")
 
+say("What the launcher itself needs")
+# Not a setting and not a file on this machine's disk, but the same shape of
+# fault: nothing complains until somebody chooses a game, and then nothing
+# happens at all. ra_players.py imports both of these at the top, so without
+# either one the picker cannot start -- and the picker is what starts every
+# game, so the console has no way to play anything while looking perfectly
+# healthy from the menu.
+#
+# It reaches this state by an ordinary route: install.sh's package phase
+# needs sudo, and an install run where that did not work leaves everything
+# else in place and these two absent.
+import importlib.util                                       # noqa: E402
+
+for module, package, breaks in (
+        ("evdev", "python3-evdev",
+         "the player picker cannot start, and it is what starts every game"),
+        ("pygame", "python3-pygame",
+         "there is no player-picker screen to draw"),
+        ("PIL", "python3-pil",
+         "box art cannot be resized for the menu")):
+    if importlib.util.find_spec(module) is not None:
+        ok("%s is installed" % package)
+    else:
+        bad("%s is not installed -- %s. Fix: sudo apt install %s"
+            % (package, breaks, package))
+
 say("Settings the launcher depends on")
 # Read from the live file rather than the template: the template says what a
 # fresh install gets, and this machine may be older than the template.
@@ -183,6 +209,8 @@ if problems:
     print("   BIOS: put the files in %s"
           % SYSTEM.replace(HOME, "~"))
     print("   Cores: install/install.sh fetches whatever is missing.")
+    print("   Packages: install/install.sh installs them, and needs sudo to")
+    print("   do it -- a run where that failed is how they go missing.")
 else:
     print("   Nothing missing. Everything here has what it needs to run.")
 

@@ -31,6 +31,10 @@ m = importlib.util.module_from_spec(importlib.util.spec_from_loader("sg", loader
 loader.exec_module(m)
 
 RDB = "/usr/share/libretro/database/rdb"
+class _Skip(Exception):
+    """Raised to leave a section that needs the libretro databases."""
+
+
 fails = []
 
 
@@ -51,12 +55,24 @@ check(m._mp(b"\x82\xa1a\x01\xa1b\x02", 0)[0] == {"a": 1, "b": 2}, "fixmap")
 check(m._mp(b"\x92\x01\x02", 0)[0] == [1, 2], "fixarray")
 
 print("-- reading a real database --")
-rows = m.read_rdb(os.path.join(RDB, "Sega - Mega Drive - Genesis.rdb"))
-check(len(rows) > 5000, "Genesis database parsed, got %d rows" % len(rows))
-check(all(isinstance(r, dict) for r in rows), "every row is a map")
-withu = [r for r in rows if r.get("users")]
-check(len(withu) > 2000, "and %d of them carry a player count" % len(withu))
-check(m.read_rdb("/etc/hostname") == [], "a file that is not an rdb reads as empty")
+# The databases come from the retroarch-data package, which the install adds.
+# Without them this is not a failing test, it is a test that has nothing to
+# read -- and reported as a failure it was one of fourteen identical-looking
+# ones at the end of an install whose package phase had not worked, none of
+# which said what was actually wrong.
+GENESIS = os.path.join(RDB, "Sega - Mega Drive - Genesis.rdb")
+HAVE_RDB = os.path.exists(GENESIS)
+if not HAVE_RDB:
+    print("  SKIP  no libretro databases here (retroarch-data is not "
+          "installed), so there is nothing to parse")
+else:
+    rows = m.read_rdb(GENESIS)
+    check(len(rows) > 5000, "Genesis database parsed, got %d rows" % len(rows))
+    check(all(isinstance(r, dict) for r in rows), "every row is a map")
+    withu = [r for r in rows if r.get("users")]
+    check(len(withu) > 2000, "and %d of them carry a player count" % len(withu))
+    check(m.read_rdb("/etc/hostname") == [],
+          "a file that is not an rdb reads as empty")
 
 print("-- titles the two databases spell differently --")
 check(m.title_key("Mario Golf - Toadstool Tour (USA)")
@@ -85,28 +101,31 @@ check(m._disc_code(b"DL-DOL-GP7E-USA") == "GP7E", "and the long one agree")
 check(m._disc_code(None) is None, "a missing serial is not a code")
 
 print("-- joining a playlist entry to a count --")
-gc = m.player_index("Nintendo - GameCube")
+if not HAVE_RDB:
+    print("  SKIP  these read the real databases, which are not installed")
+gc = m.player_index("Nintendo - GameCube") if HAVE_RDB else None
 # Mario Party 7 is the case the serial fallback exists for: the row the
 # playlist name matches has no count, and the row that has one is named
 # differently but shares a disc code.
-check(m.entry_players({"label": "Mario Party 7 (USA) (Rev 1)",
-                       "path": "/x/Mario Party 7 (USA) (Rev 1).ciso",
-                       "crc32": "00000000|crc"}, gc) == 8,
-      "Mario Party 7 resolves to 8 through its disc serial")
-check(m.entry_players({"label": "Luigi's Mansion (USA, Canada)",
-                       "path": "/x/Luigi's Mansion (USA, Canada).ciso",
-                       "crc32": "00000000|crc"}, gc) == 1,
-      "Luigi's Mansion resolves to 1 by closest name")
+if HAVE_RDB:
+    check(m.entry_players({"label": "Mario Party 7 (USA) (Rev 1)",
+                           "path": "/x/Mario Party 7 (USA) (Rev 1).ciso",
+                           "crc32": "00000000|crc"}, gc) == 8,
+          "Mario Party 7 resolves to 8 through its disc serial")
+    check(m.entry_players({"label": "Luigi's Mansion (USA, Canada)",
+                           "path": "/x/Luigi's Mansion (USA, Canada).ciso",
+                           "crc32": "00000000|crc"}, gc) == 1,
+          "Luigi's Mansion resolves to 1 by closest name")
 
-gen = m.player_index("Sega - Mega Drive - Genesis")
-check(m.entry_players({"label": "anything at all", "path": "/x/whatever.md",
-                       "crc32": "1A2B3C4D|crc"}, gen) is None,
-      "an unknown crc and an unknown name find nothing")
+    gen = m.player_index("Sega - Mega Drive - Genesis")
+    check(m.entry_players({"label": "anything at all", "path": "/x/whatever.md",
+                           "crc32": "1A2B3C4D|crc"}, gen) is None,
+          "an unknown crc and an unknown name find nothing")
 
-print("-- Sega CD has no counts at all, which is why overrides exist --")
-scd = m.player_index("Sega - Mega-CD - Sega CD")
-check(scd is not None and not scd[1],
-      "the Sega CD database carries no player counts")
+    print("-- Sega CD has no counts at all, which is why overrides exist --")
+    scd = m.player_index("Sega - Mega-CD - Sega CD")
+    check(scd is not None and not scd[1],
+          "the Sega CD database carries no player counts")
 
 print("-- the generated file, and hand-kept counts beating the database --")
 # These assert on whatever library this machine actually has, so they are a
@@ -139,6 +158,12 @@ else:
           % ("" if not missed else ": missing " + ", ".join(missed[:3])))
 
 print("-- a game added later gets its count without anyone asking --")
+# Counting a game means looking it up in the databases, so this needs them
+# too: without retroarch-data every count comes back empty and the checks
+# below read as failures when what is missing is a package.
+if not HAVE_RDB:
+    print("  SKIP  these count real games against the real databases, which "
+          "are not installed")
 # Point the whole thing at a scratch directory: this writes playlists and
 # regenerates counts, and must not touch the real ones.
 real = (m.PLDIR, m.PLAYERS, m.PLAYERS_MANUAL)
@@ -156,6 +181,9 @@ try:
     m.PLDIR = tmp
     m.PLAYERS = os.path.join(tmp, "gameplayers.json")
     m.PLAYERS_MANUAL = os.path.join(tmp, "gameplayers.manual.json")
+
+    if not HAVE_RDB:
+        raise _Skip()
 
     write_playlist(["Sonic The Hedgehog (USA, Europe)"])
     check(m.player_counts() == (1, 1), "the first game is counted")
@@ -189,6 +217,8 @@ try:
     counts = json.load(open(m.PLAYERS))["counts"]
     check(counts[SYSTEM]["Streets of Rage 3 (USA)"] == 7,
           "the override beat the database's 2")
+except _Skip:
+    pass
 finally:
     m.PLDIR, m.PLAYERS, m.PLAYERS_MANUAL = real
     for f in os.listdir(tmp):

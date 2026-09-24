@@ -735,16 +735,46 @@ if [ "$DRY" = 1 ]; then
 else
   tests="$TARGET_HOME/.local/share/gametests"
   if [ -d "$tests" ]; then
-    total=0; failed=0
+    total=0; failed=0; skipped=0; absent=""
     for t in "$tests"/test_*.py; do
       [ -e "$t" ] || continue
       if out=$(cd "$tests" && python3 "$t" 2>&1); then
         n=$(printf '%s' "$out" | grep -c '^  ok'); total=$((total+n))
       else
-        failed=$((failed+1)); warn "$(basename "$t") failed"
+        # A suite that could not run is not a suite that failed, and saying
+        # so mattered: an install whose package phase had not worked ended
+        # with "14 suites failed" and no hint anywhere that all fourteen were
+        # one missing module. Somebody reading that reasonably concludes the
+        # code is broken, when what is broken is the install they just ran.
+        miss=$(printf '%s' "$out" |
+               sed -n "s/.*ModuleNotFoundError: No module named '\([^']*\)'.*/\1/p" |
+               head -1)
+        if [ -n "$miss" ]; then
+          skipped=$((skipped+1))
+          case " $absent " in *" $miss "*) ;; *) absent="$absent $miss" ;; esac
+        else
+          failed=$((failed+1)); warn "$(basename "$t") failed"
+        fi
       fi
     done
-    [ "$failed" = 0 ] && ok "$total checks passed" || bad "$failed suites failed"
+    if [ "$failed" = 0 ]; then
+      ok "$total checks passed"
+    else
+      bad "$failed suites failed"
+    fi
+    if [ "$skipped" -gt 0 ]; then
+      warn "$skipped suites could not run:$absent is not installed"
+      for m in $absent; do
+        case "$m" in
+          evdev)  warn "  without python3-evdev the player picker cannot start,"
+                  warn "  and the player picker is what starts every game" ;;
+          pygame) warn "  without python3-pygame there is no player picker screen" ;;
+          *)      warn "  python3-$m" ;;
+        esac
+      done
+      warn "  the Packages phase above is what installs these; re-run without"
+      warn "  --skip-packages, with sudo available"
+    fi
   else
     warn "no tests found at $tests"
   fi
@@ -759,7 +789,11 @@ say "Whether it can play what is here"
 if [ "$DRY" = 1 ]; then
   skip "would check the BIOS, cores and settings against the games that are here"
 elif [ -x "$HERE/../bin/retrobox-ready" ]; then
-  "$HERE/../bin/retrobox-ready" 2>&1 | sed 's/^/   /' || true
+  # In the home being installed into, the same way deploy.sh is run. It reads
+  # ~/.config/retroarch/retroarch.cfg, and without this it read the invoking
+  # user's: an install.sh --home run reported all seven launcher settings
+  # missing immediately after writing all thirty-nine of them correctly.
+  HOME="$TARGET_HOME" "$HERE/../bin/retrobox-ready" 2>&1 | sed 's/^/   /' || true
 else
   warn "bin/retrobox-ready is missing"
 fi
