@@ -142,8 +142,50 @@ DEFAULT_KBD = {"a": "x", "b": "z", "x": "s", "y": "a",
                "start": "enter", "select": "rshift", "l": "q", "r": "w"}
 
 
+def udev_order(path):
+    """Where libudev's enumeration puts this node: by sysfs path, a component
+    at a time.
+
+    That is the order RetroArch's udev driver numbers pads in at startup --
+    NOT the eventN number. The two agree only until a pad turns up late: a
+    Bluetooth pad that pairs after a USB one gets the higher event number but
+    can hang off an earlier USB port. Found on ultra with a Switch Pro
+    Controller (event19, behind the Bluetooth adapter on port 1-8) and an Xbox
+    pad (event18, port 1-9). RetroArch logged "Pad #2 (/dev/input/event19)"
+    and "Pad #3 (/dev/input/event18)"; this wrote them the other way round, so
+    player 1 got the Xbox pad's index alongside the Pro Controller's
+    reservation, and RetroArch's reservation pass then shuffled ports to
+    reconcile the two.
+
+    Per component because that is how systemd's path_compare orders them:
+    "1-1" (a pad on the port) before "1-1.2" (one behind a hub on it), where a
+    whole-string compare puts the hub first.
+    """
+    name = os.path.basename(path)
+    real = os.path.realpath("/sys/class/input/" + name)
+    return real.split("/") if real.startswith("/sys/") else ["~" + name]
+
+
+def udev_joystick(path, guess):
+    """Whether udev tags this node ID_INPUT_JOYSTICK -- the one test RetroArch
+    applies. Falls back to the caller's guess when the udev database cannot be
+    read."""
+    try:
+        rdev = os.stat(path).st_rdev
+        with open("/run/udev/data/c%d:%d" % (os.major(rdev), os.minor(rdev))) as fh:
+            return any(line.strip() == "E:ID_INPUT_JOYSTICK=1" for line in fh)
+    except OSError:
+        return guess
+
+
 def joystick_devices():
-    """Joystick evdev nodes, ordered the way RetroArch's udev driver sees them."""
+    """Pads, each with the index RetroArch's udev driver will give it.
+
+    Every device udev calls a joystick takes a number in RetroArch, including
+    ones of no use on this screen (a wheel, a flight stick), so they are
+    counted here too and only then left out -- skipping them outright would
+    shift the index of every pad after them.
+    """
     found = []
     for path in evdev.list_devices():
         try:
@@ -153,14 +195,20 @@ def joystick_devices():
         caps = dev.capabilities(absinfo=False)
         keys = set(caps.get(evdev.ecodes.EV_KEY, []))
         abss = set(caps.get(evdev.ecodes.EV_ABS, []))
-        # A joystick has gamepad buttons and at least a main stick
-        if (keys & (BTN_A | BTN_B)) and evdev.ecodes.ABS_X in abss:
-            num = int("".join(c for c in os.path.basename(path) if c.isdigit()) or -1)
-            found.append((num, path, dev))
+        # A pad has gamepad buttons and at least a main stick
+        usable = bool(keys & (BTN_A | BTN_B)) and evdev.ecodes.ABS_X in abss
+        if udev_joystick(path, usable):
+            found.append((udev_order(path), usable, path, dev))
         else:
             dev.close()
     found.sort(key=lambda t: t[0])
-    return [(i, path, dev) for i, (num, path, dev) in enumerate(found)]
+    out = []
+    for i, (_order, usable, path, dev) in enumerate(found):
+        if usable:
+            out.append((i, path, dev))
+        else:
+            dev.close()
+    return out
 
 
 def keyboard_devices():
@@ -2254,7 +2302,46 @@ def guard_override():
     return path
 
 
-def write_override(pads, slots, fresh=False, slot=None):
+# Where an unclaimed port is parked. Not 99, which this used to be: RetroArch
+# indexes a MAX_USERS-long (16) array by every port's joypad index while it
+# reconciles reservations (prev_assigned_player_slots in task_autodetect.c),
+# so 99 wrote past the end of it on every launch with an empty port. 15 is in
+# range and is only a real pad when sixteen are plugged in.
+PARKED = 15
+
+# The adapter a console needed for players 3 and up. Without it the core shows
+# the game two controllers however many were picked, and a four-player game
+# offers two-player modes only. {core: [(port, device id, first player)]}:
+# the device goes in when someone has claimed that player or a later one.
+ADAPTERS = {
+    # The Super Multitap, in port 2: player 1 stays on port 1, players 2-5 are
+    # the multitap's. RETRO_DEVICE_JOYPAD_MULTITAP, (1 << 8) | JOYPAD.
+    "snes9x": [(2, 257, 3)],
+    # The Four Score. FCEUmm turns it on for the games in its own database and
+    # nowhere else; "Gamepad" on port 3 or 4 turns it on for any game.
+    # RETRO_DEVICE_GAMEPAD, SUBCLASS(JOYPAD, 1).
+    "fceumm": [(3, 257, 3), (4, 257, 3)],
+}
+
+
+def core_of(args):
+    """The core's short name ("snes9x") from a RetroArch command line, or ""."""
+    for i, arg in enumerate(args[:-1]):
+        if arg == "-L":
+            return os.path.basename(args[i + 1]).replace("_libretro.so", "")
+    return ""
+
+
+def adapter_lines(core, claimed):
+    """(port, device) pairs plugging in the multiplayer adapter, if needed."""
+    if not claimed:
+        return []
+    players = max(p.slot for p in claimed) + 1
+    return [(port, device) for port, device, first in ADAPTERS.get(core, [])
+            if players >= first]
+
+
+def write_override(pads, slots, fresh=False, slot=None, core=""):
     """Write a RetroArch config fragment binding claimed devices to ports."""
     claimed = [p for p in pads if p.slot is not None]
     kbd_slot = next((p.slot for p in claimed if p.kind == "kbd"), None)
@@ -2270,12 +2357,12 @@ def write_override(pads, slots, fresh=False, slot=None):
                         key=lambda p: p.slot):
             fh.write('input_player%d_joypad_index = "%d"\n' % (p.slot + 1, p.index))
             reserved[p.slot] = p.name
-        # Park unclaimed ports on an index that cannot exist so a stray pad
-        # (or the keyboard-backed port) does not silently take player 1.
+        # Park unclaimed ports on an index no pad has, so a stray pad (or the
+        # keyboard-backed port) does not silently take player 1.
         used = {p.slot for p in claimed if p.kind == "pad"}
         for s in range(ports):
             if s not in used:
-                fh.write('input_player%d_joypad_index = "99"\n' % (s + 1))
+                fh.write('input_player%d_joypad_index = "%d"\n' % (s + 1, PARKED))
         # Hold each port for the controller that claimed it, so unplugging a
         # pad mid-game and plugging it back in returns it to the same player
         # instead of the first free port.
@@ -2295,12 +2382,30 @@ def write_override(pads, slots, fresh=False, slot=None):
         # failed to match would leave the port empty; an empty port is a much
         # smaller problem than the wrong device in it, and the name written
         # here is read straight off the device a moment earlier.
+        #
+        # But only for a name no other pad here shares. RetroArch matches a
+        # reservation by name and gives it to whichever such pad finishes
+        # autoconfiguring first, swapping ports to make room. Two identical
+        # pads (ultra has two "Core (Plus) Wired Controller"s) therefore got
+        # swapped behind the picker's back:
+        #
+        #   [Autoconf] Device "Core (Plus) Wired Controller" (20d6:a711) is
+        #              reserved for player 2, updating.
+        #   [Autoconf] Preferred slot was taken earlier by "(null)",
+        #              reassigning that to 3.
+        #
+        # A shared name is still written, unreserved (type 0, which RetroArch
+        # ignores), because fourth-player reads these lines to tell a guest
+        # which player they are. The joypad index alone pins those pads.
+        names = [p.name for p in pads if p.kind == "pad"]
         for s in range(ports):
             name = reserved.get(s)
             fh.write('input_player%d_reserved_device = "%s"\n'
                      % (s + 1, name or ""))
             fh.write('input_player%d_device_reservation_type = "%d"\n'
-                     % (s + 1, 2 if name else 0))
+                     % (s + 1, 2 if name and names.count(name) == 1 else 0))
+        for port, device in adapter_lines(core, claimed):
+            fh.write('input_libretro_device_p%d = "%d"\n' % (port, device))
         if kbd_slot is not None:
             # RetroArch merges every keyboard into one input, so a keyboard
             # player's binds have to live on exactly one port -- and be cleared
@@ -2580,7 +2685,8 @@ def play_once(args, cap, shader, fresh, asked, repick):
         # the game across in a slot of its own, and the resume point was put
         # aside when this game first started.
         preserve_auto_state(rom_of(args))
-    override = write_override(pads, slots, fresh, slot=load_slot) \
+    override = write_override(pads, slots, fresh, slot=load_slot,
+                              core=core_of(args)) \
         if launch else None
     for p in pads:
         p.close()

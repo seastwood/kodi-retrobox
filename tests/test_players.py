@@ -61,8 +61,8 @@ def key(code, value=1):
     return Event(e.EV_KEY, code, value)
 
 
-def override_text(pads, slots):
-    path = m.write_override(pads, slots)
+def override_text(pads, slots, core=""):
+    path = m.write_override(pads, slots, core=core)
     text = open(path).read()
     os.unlink(path)
     return text
@@ -432,7 +432,7 @@ check('input_player3_joypad_index = "3"' in text, "player 3 -> index 3")
 
 print("-- unclaimed ports are parked, all the way to eight --")
 for port in (2, 4, 5, 6, 7, 8):
-    check('input_player%d_joypad_index = "99"' % port in text,
+    check('input_player%d_joypad_index = "%d"' % (port, m.PARKED) in text,
           "player %d parked" % port)
 check(text.count("joypad_index") == 8, "eight ports written, got %d"
       % text.count("joypad_index"))
@@ -462,7 +462,7 @@ check('input_player1_a = "nul"' in text,
 check('input_player8_a = "nul"' in text, "and so is every other port")
 check(text.count('_a = "nul"') == 7, "seven ports cleared, got %d"
       % text.count('_a = "nul"'))
-check('input_player5_joypad_index = "99"' in text,
+check('input_player5_joypad_index = "%d"' % m.PARKED in text,
       "the keyboard's port takes no joypad")
 
 print("-- each device keeps its own colour --")
@@ -539,6 +539,62 @@ binds = m.keyboard_binds()
 check(binds["a"] == "comma", "read A from the config, got %r" % binds["a"])
 check(binds["start"] == "enter", "and fell back for the rest, got %r"
       % binds["start"])
+
+print("-- a parked port stays inside RetroArch's sixteen --")
+check(0 <= m.PARKED < 16,
+      "RetroArch indexes a 16-long array by it, got %d" % m.PARKED)
+
+print("-- two pads with one name are pinned by index, not reserved --")
+c0, c1 = pad(0, "Core (Plus) Wired Controller"), pad(1, "Core (Plus) Wired Controller")
+pro, xb = pad(2, "Pro Controller"), pad(3, "Xbox Series Controller")
+pro.slot, c1.slot, c0.slot, xb.slot = 0, 1, 2, 3
+text = override_text([c0, c1, pro, xb], 4)
+check('input_player2_joypad_index = "1"' in text
+      and 'input_player3_joypad_index = "0"' in text,
+      "each twin keeps the index it claimed with")
+check('input_player2_device_reservation_type = "0"' in text
+      and 'input_player3_device_reservation_type = "0"' in text,
+      "neither twin is reserved, or RetroArch swaps them")
+check('input_player2_reserved_device = "Core (Plus) Wired Controller"' in text,
+      "but the name is still there for fourth-player to read")
+check('input_player1_device_reservation_type = "2"' in text
+      and 'input_player4_device_reservation_type = "2"' in text,
+      "a pad with a name of its own is still reserved")
+
+print("-- an unclaimed twin still makes the name shared --")
+c0.slot = None
+text = override_text([c0, c1, pro, xb], 4)
+check('input_player2_device_reservation_type = "0"' in text,
+      "the spare would otherwise be handed player 2")
+
+print("-- the multiplayer adapter goes in for player 3 and up --")
+c0.slot = 2
+check(m.core_of(["-L", "/x/cores/snes9x_libretro.so", "game.sfc"]) == "snes9x",
+      "the core is read off the command line")
+text = override_text([c0, c1, pro, xb], 4, core="snes9x")
+check('input_libretro_device_p2 = "257"' in text, "SNES gets the multitap on port 2")
+text = override_text([c0, c1, pro, xb], 4, core="fceumm")
+check('input_libretro_device_p3 = "257"' in text
+      and 'input_libretro_device_p4 = "257"' in text, "NES gets the Four Score")
+c0.slot = xb.slot = None
+text = override_text([c0, c1, pro, xb], 4, core="snes9x")
+check("input_libretro_device" not in text, "two players leave the ports alone")
+c0.slot = 3
+text = override_text([c0, c1, pro, xb], 4, core="snes9x")
+check('input_libretro_device_p2 = "257"' in text,
+      "player 4 alone, with 3 empty, still needs it")
+text = override_text([c0, c1, pro, xb], 4, core="mupen64plus_next")
+check("input_libretro_device" not in text, "a core with four ports gets nothing")
+
+print("-- pads are numbered by sysfs path, the way libudev lists them --")
+order = sorted(["/sys/devices/pci0/usb1/1-9/1-9:1.0/input/input30/event18",
+                "/sys/devices/pci0/usb1/1-8/1-8:1.0/bluetooth/hci0/input32/event19",
+                "/sys/devices/pci0/usb1/1-1/1-1:1.0/input/input6/event3",
+                "/sys/devices/pci0/usb1/1-1.2/1-1.2:1.0/input/input9/event5"],
+               key=lambda path: path.split("/"))
+check([o.rsplit("/", 1)[1] for o in order] == ["event3", "event5", "event19", "event18"],
+      "port 1-8 before 1-9 whatever the event number, and 1-1 before the hub "
+      "behind it, got %r" % order)
 
 import shutil
 shutil.rmtree(tmp)
