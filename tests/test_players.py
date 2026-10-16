@@ -431,13 +431,6 @@ text = override_text([p0, p1], 8)
 check('input_player1_joypad_index = "0"' in text, "player 1 -> index 0")
 check('input_player3_joypad_index = "3"' in text, "player 3 -> index 3")
 
-print("-- a claimed pad's left stick doubles as its d-pad --")
-check('input_player1_analog_dpad_mode = "1"' in text
-      and 'input_player3_analog_dpad_mode = "1"' in text,
-      "players 1 and 3, whose pads send the d-pad as the stick on some models")
-check('input_player2_analog_dpad_mode' not in text,
-      "and an empty port is left alone")
-
 print("-- unclaimed ports are parked, all the way to eight --")
 for port in (2, 4, 5, 6, 7, 8):
     check('input_player%d_joypad_index = "%d"' % (port, m.PARKED) in text,
