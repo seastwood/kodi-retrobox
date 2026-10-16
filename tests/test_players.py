@@ -503,23 +503,18 @@ except Exception as exc:
     print("     %s" % exc)
 check(drew, "pad and keyboard icons both render")
 
-print("-- a claimed port is held for that controller across a replug --")
+print("-- a claimed port names its controller, without reserving it --")
 p0 = pad(0, "Nintendo Co., Ltd. Pro Controller")
 p1 = pad(1, "Xbox Wireless Controller")
 p0.slot, p1.slot = 0, 3
 text = override_text([p0, p1], 8)
 check('input_player1_reserved_device = "Nintendo Co., Ltd. Pro Controller"' in text,
-      "player 1 reserved for the Pro Controller")
-# "Reserved" (2), not "preferred" (1). Preferred is a suggestion that
-# autoconfiguration may ignore, and the picker's whole job is deciding who
-# plays -- a port that the picker gave to one controller and RetroArch gave
-# to another leaves the person who claimed it driving nothing.
-check('input_player1_device_reservation_type = "2"' in text,
-      "and marked reserved, which is binding")
-check('input_player1_device_reservation_type = "1"' not in text,
-      "not merely preferred")
+      "player 1 names the Pro Controller, for fourth-player")
+check('input_player1_device_reservation_type = "0"' in text,
+      "but does not reserve it: any reservation makes RetroArch move the "
+      "pads that have none")
 check('input_player4_reserved_device = "Xbox Wireless Controller"' in text,
-      "player 4 reserved for the Xbox pad")
+      "player 4 names the Xbox pad")
 
 print("-- ports nobody claimed reserve nothing --")
 check('input_player2_reserved_device = ""' in text, "player 2 has no reservation")
@@ -545,28 +540,25 @@ print("-- a parked port stays inside RetroArch's sixteen --")
 check(0 <= m.PARKED < 16,
       "RetroArch indexes a 16-long array by it, got %d" % m.PARKED)
 
-print("-- two pads with one name are pinned by index, not reserved --")
+print("-- nothing is reserved; the index alone says who is who --")
 c0, c1 = pad(0, "Core (Plus) Wired Controller"), pad(1, "Core (Plus) Wired Controller")
 pro, xb = pad(2, "Pro Controller"), pad(3, "Xbox Series Controller")
+spare = pad(4, "8BitDo Micro gamepad")
 pro.slot, c1.slot, c0.slot, xb.slot = 0, 1, 2, 3
-text = override_text([c0, c1, pro, xb], 4)
+text = override_text([c0, c1, pro, xb, spare], 4)
 check('input_player2_joypad_index = "1"' in text
       and 'input_player3_joypad_index = "0"' in text,
       "each twin keeps the index it claimed with")
-check('input_player2_device_reservation_type = "0"' in text
-      and 'input_player3_device_reservation_type = "0"' in text,
-      "neither twin is reserved, or RetroArch swaps them")
-check('input_player2_reserved_device = "Core (Plus) Wired Controller"' in text,
-      "but the name is still there for fourth-player to read")
-check('input_player1_device_reservation_type = "2"' in text
-      and 'input_player4_device_reservation_type = "2"' in text,
-      "a pad with a name of its own is still reserved")
-
-print("-- an unclaimed twin still makes the name shared --")
-c0.slot = None
-text = override_text([c0, c1, pro, xb], 4)
-check('input_player2_device_reservation_type = "0"' in text,
-      "the spare would otherwise be handed player 2")
+check('device_reservation_type = "2"' not in text
+      and 'device_reservation_type = "1"' not in text,
+      "no port is reserved, or RetroArch moves unreserved pads -- a spare "
+      "parked a picked PowerA")
+check(text.count('device_reservation_type = "0"') == 16,
+      "all sixteen say so, so nothing from retroarch.cfg survives, got %d"
+      % text.count('device_reservation_type = "0"'))
+check('input_player2_reserved_device = "Core (Plus) Wired Controller"' in text
+      and 'input_player1_reserved_device = "Pro Controller"' in text,
+      "but the names are there for fourth-player to read")
 
 print("-- the multiplayer adapter goes in for player 3 and up --")
 c0.slot = 2

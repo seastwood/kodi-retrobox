@@ -2586,47 +2586,35 @@ def write_override(pads, slots, fresh=False, slot=None):
         for s in range(RA_PORTS):
             if s not in used:
                 fh.write('input_player%d_joypad_index = "%d"\n' % (s + 1, PARKED))
-        # Hold each port for the controller that claimed it, so unplugging a
-        # pad mid-game and plugging it back in returns it to the same player
-        # instead of the first free port.
+        # No device is reserved for any port. The joypad index above already
+        # says which pad is which player, and is right now that pads are
+        # counted RetroArch's way (udev_order). A reservation can only move
+        # pads away from it, and did, three ways:
         #
-        # "Reserved" (2), not "Preferred" (1). Preferred is a suggestion, and
-        # autoconfiguration is free to ignore it -- which it does the moment
-        # anything else is plugged in. With a Moonlight client connected,
-        # Sunshine's four virtual pads appeared first and took all four ports:
+        # - It matches by name, so of two identical pads (ultra's two "Core
+        #   (Plus) Wired Controller"s) whichever finished autoconfiguring
+        #   first took the port: "Preferred slot was taken earlier by
+        #   "(null)", reassigning that to 3."
+        # - Once any port is reserved, RetroArch moves every UNreserved pad to
+        #   the "first free" player (reallocate_port_if_needed in
+        #   task_autodetect.c), and looks up the player it displaces in a
+        #   table that answers player 1 for any pad no player has. A spare
+        #   pad nobody picked therefore parked a picked one: a PowerA that
+        #   had claimed its player drove nothing.
+        # - Reserving was for Sunshine's virtual pads arriving first and
+        #   taking the ports -- which was the old eventN numbering putting
+        #   them at the wrong index, not something a reservation fixes.
         #
-        #   [Autoconf] Remote player 1 configured in port 1.
-        #   [ERROR] [Autoconf] No free and unreserved player slots found for
-        #           adding new device "Fourth Player 4"!
-        #
-        # so the pad that had claimed player 1 on the picker screen drove
-        # nothing at all, while a device nobody picked drove the game. The
-        # earlier reasoning for preferring "preferred" was that a name which
-        # failed to match would leave the port empty; an empty port is a much
-        # smaller problem than the wrong device in it, and the name written
-        # here is read straight off the device a moment earlier.
-        #
-        # But only for a name no other pad here shares. RetroArch matches a
-        # reservation by name and gives it to whichever such pad finishes
-        # autoconfiguring first, swapping ports to make room. Two identical
-        # pads (ultra has two "Core (Plus) Wired Controller"s) therefore got
-        # swapped behind the picker's back:
-        #
-        #   [Autoconf] Device "Core (Plus) Wired Controller" (20d6:a711) is
-        #              reserved for player 2, updating.
-        #   [Autoconf] Preferred slot was taken earlier by "(null)",
-        #              reassigning that to 3.
-        #
-        # A shared name is still written, unreserved (type 0, which RetroArch
-        # ignores), because fourth-player reads these lines to tell a guest
-        # which player they are. The joypad index alone pins those pads.
-        names = [p.name for p in pads if p.kind == "pad"]
-        for s in range(ports):
+        # With no reservation anywhere, RetroArch returns before touching any
+        # index ("no_reservation_at_all"). The names are still written, as
+        # type 0, which RetroArch ignores: fourth-player reads them to tell a
+        # guest which player they are.
+        for s in range(RA_PORTS):
             name = reserved.get(s)
-            fh.write('input_player%d_reserved_device = "%s"\n'
-                     % (s + 1, name or ""))
-            fh.write('input_player%d_device_reservation_type = "%d"\n'
-                     % (s + 1, 2 if name and names.count(name) == 1 else 0))
+            if s < ports or name:
+                fh.write('input_player%d_reserved_device = "%s"\n'
+                         % (s + 1, name or ""))
+            fh.write('input_player%d_device_reservation_type = "0"\n' % (s + 1))
         if kbd_slot is not None:
             # RetroArch merges every keyboard into one input, so a keyboard
             # player's binds have to live on exactly one port -- and be cleared
