@@ -2313,6 +2313,19 @@ PARKED = 15
 # RetroArch's player ports (MAX_USERS); every one is given a pad or parked.
 RA_PORTS = 16
 
+# Settings the picker's work rests on, forced on every launch.
+RA_SETTINGS = (
+    # RetroArch tells a core "nothing plugged in" on every port beyond this
+    # (command_event_init_controllers), whatever the picker chose: a box with
+    # it at 2 would lose players 3 and 4 in every emulator, four-port ones
+    # included.
+    ("input_max_users", RA_PORTS),
+    # The adapters live in game remaps and game core options; with either of
+    # these off, RetroArch never reads them.
+    ("auto_remaps_enable", "true"),
+    ("game_specific_options", "true"),
+)
+
 # The adapter a console needed for players 3 and up. Without it the core shows
 # the game two controllers however many were picked, and a four-player game
 # offers two-player modes only -- or, like Super Bomberman, fills players 3
@@ -2345,7 +2358,17 @@ ADAPTERS = {
                         "options": {"beetle_psx_hw_enable_multitap_port1": "enabled"}},
     "mednafen_psx": {"library": "Beetle PSX",
                      "options": {"beetle_psx_enable_multitap_port1": "enabled"}},
+    # The other SNES core: its multitap is an option, on port 2 like snes9x's.
+    "mednafen_supafaust": {"library": "Beetle Supafaust",
+                           "options": {"supafaust_multitap": "port2"}},
+    # Saturn: a 6-player multitap on port 1 is players 1-6.
+    "yabause": {"library": "Yabause",
+                "options": {"yabause_multitap_port1": "enabled"}},
 }
+# Not here, because nothing needs doing: N64 (Mupen64Plus-Next), GameCube and
+# Wii (Dolphin) and Dreamcast (Flycast) have four ports of their own, and
+# plug a pad into each port RetroArch reports -- see RA_SETTINGS. PS2 (LRPS2)
+# has a multitap, but no option RetroArch can reach.
 ADAPTER_FROM = 3                 # the first player that needs one
 
 # EA's 4-Way Play and Sega's Team Player are different hardware, and a game
@@ -2569,6 +2592,10 @@ def write_override(pads, slots, fresh=False, slot=None):
         # file for somebody's own and stops managing it. Saving one from the
         # menu still works; only the silent save on exit is off.
         fh.write('remap_save_on_exit = "false"\n')
+        # What every adapter and port above depends on, said here rather than
+        # trusted to retroarch.cfg, which differs from box to box.
+        for key, value in RA_SETTINGS:
+            fh.write('%s = "%s"\n' % (key, value))
         reserved = {}
         for p in sorted((p for p in claimed if p.kind == "pad"),
                         key=lambda p: p.slot):

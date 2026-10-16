@@ -440,6 +440,10 @@ check(text.count("joypad_index") == 16, "all sixteen ports written, got %d"
 check('input_player5_joypad_index = "%d"' % m.PARKED in override_text([p0, p1], 4),
       "port 5 is parked even on a four-slot board, or a multitap makes the "
       "fifth pad a second player")
+check('input_max_users = "16"' in text
+      and 'auto_remaps_enable = "true"' in text
+      and 'game_specific_options = "true"' in text,
+      "every port is live and the adapter files are read, whatever retroarch.cfg says")
 check('remap_save_on_exit = "false"' in text,
       "RetroArch may not rewrite the adapter remap and drop its mark")
 
@@ -654,6 +658,15 @@ check('beetle_psx_hw_renderer = "hardware"' in read(opt),
 c0.slot = None
 m.place_adapter("mednafen_psx_hw", "/games/psx/MMV3.cue", [c1, pro])
 check(read(opt) is None, "two players take it back out")
+
+print("-- Saturn and the other SNES core: options too --")
+c0.slot = 2
+m.place_adapter("yabause", "/games/saturn/Bomberman.cue", [c0, c1, pro])
+yab = read(os.path.join(m.OPTIONS_DIR, "Yabause", "Bomberman.opt"))
+check(yab and 'yabause_multitap_port1 = "enabled"' in yab, "Saturn multitap, got %r" % yab)
+m.place_adapter("mednafen_supafaust", "/games/snes/B.sfc", [c0, c1, pro])
+sf = read(os.path.join(m.OPTIONS_DIR, "Beetle Supafaust", "B.opt"))
+check(sf and 'supafaust_multitap = "port2"' in sf, "supafaust multitap, got %r" % sf)
 
 print("-- a core with four ports of its own gets nothing --")
 c0.slot = 2
