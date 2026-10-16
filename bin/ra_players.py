@@ -2451,6 +2451,16 @@ def write_override(pads, slots, fresh=False, slot=None):
         for s in range(ports):
             if s not in used:
                 fh.write('input_player%d_joypad_index = "%d"\n' % (s + 1, PARKED))
+        # The left stick doubles as the d-pad, for every pad. Some pads send
+        # their d-pad AS the stick: an 8BitDo mini pairing as a "Pro
+        # Controller" declares a hat it never moves and puts all four
+        # directions on ABS_X/ABS_Y at full throw, so a SNES game -- which
+        # reads only the d-pad -- got its face buttons and nothing else.
+        # Nothing on the device says so in advance, hence every pad. Mode 1,
+        # not the "forced" 3: RetroArch switches it off by itself once a core
+        # reads the analog stick, so an N64 game keeps a real stick.
+        for s in sorted(used):
+            fh.write('input_player%d_analog_dpad_mode = "1"\n' % (s + 1))
         # Hold each port for the controller that claimed it, so unplugging a
         # pad mid-game and plugging it back in returns it to the same player
         # instead of the first free port.
