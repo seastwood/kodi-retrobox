@@ -85,6 +85,34 @@ finally:
     sg.PACKAGED_AUTOCONFIG, sg.USER_AUTOCONFIG = was
     shutil.rmtree(tmp, ignore_errors=True)
 
+print("\nbinds the repo knows a packaged profile is missing are added")
+tmp = tempfile.mkdtemp(prefix="autoconf-add-")
+adds = os.path.join(tmp, "adds")
+mine = os.path.join(tmp, "mine")
+profile(adds, "Some Pad.cfg", '# why\ninput_up_btn = "h0up"\ninput_a_btn = "9"\n')
+micro = profile(mine, "Some Pad.cfg",
+                'input_device = "Some Pad"\ninput_up_axis = "-1"\ninput_a_btn = "0"')
+was = (sg.AUTOCONFIG_ADDITIONS, sg.USER_AUTOCONFIG)
+sg.AUTOCONFIG_ADDITIONS, sg.USER_AUTOCONFIG = adds, mine
+try:
+    n = sg.add_autoconfig_lines()
+    body = open(micro).read()
+    check(n == 1 and 'input_up_btn = "h0up"' in body,
+          "the missing hat bind is added, got %d: %r" % (n, body))
+    check('input_up_axis = "-1"' in body, "alongside the axis bind, not instead")
+    check(body.count("input_a_btn") == 1 and 'input_a_btn = "0"' in body,
+          "a key the profile already has is left as it is")
+    check("# why" not in body, "the file's own comments are not copied")
+    check(sg.add_autoconfig_lines() == 0, "a second pass adds nothing")
+    os.unlink(micro)
+    check(sg.add_autoconfig_lines() == 0, "a profile not in place is skipped")
+finally:
+    sg.AUTOCONFIG_ADDITIONS, sg.USER_AUTOCONFIG = was
+    shutil.rmtree(tmp, ignore_errors=True)
+check(os.path.exists(os.path.join(REPO, "templates", "autoconfig-additions",
+                                  "8BitDo_Micro_BT.cfg")),
+      "the 8BitDo Micro's hat binds are in the repo")
+
 print("\nthe settings that make any of it count")
 tpl = open(os.path.join(REPO, "templates", "retroarch-settings.conf")).read()
 check('input_autodetect_enable = "true"' in tpl,

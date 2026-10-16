@@ -1110,6 +1110,11 @@ def game_running():
 # by a package update turns up without anybody re-running the install.
 PACKAGED_AUTOCONFIG = "/usr/share/libretro/autoconfig"
 USER_AUTOCONFIG = os.path.expanduser("~/.config/retroarch/autoconfig")
+# Lines this repo adds to packaged profiles that need them: one file per
+# profile, named as the profile is. See add_autoconfig_lines.
+AUTOCONFIG_ADDITIONS = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
+    "templates", "autoconfig-additions")
 
 
 def seed_autoconfig():
@@ -1148,7 +1153,53 @@ def seed_autoconfig():
                 continue
             have.add(name)
             copied += 1
+    added = add_autoconfig_lines()
+    if added:
+        log("controller profile lines added: %d" % added)
     return copied
+
+
+def add_autoconfig_lines():
+    """Give packaged profiles the binds this repo knows they are missing.
+
+    Only a key the profile does not mention at all is added, so a profile
+    somebody re-saved with binds of their own keeps them, and a second pass
+    adds nothing. A profile that is not in place yet is skipped; the copy
+    above brings it, and the next pass completes it.
+    """
+    added = 0
+    try:
+        names = sorted(os.listdir(AUTOCONFIG_ADDITIONS))
+    except OSError:
+        return 0
+    for name in names:
+        if not name.endswith(".cfg"):
+            continue
+        dest = os.path.join(USER_AUTOCONFIG, name)
+        try:
+            body = open(dest).read()
+            extra = open(os.path.join(AUTOCONFIG_ADDITIONS, name)).read()
+        except OSError:
+            continue
+        keys = {line.partition("=")[0].strip() for line in body.splitlines()
+                if "=" in line and not line.lstrip().startswith("#")}
+        lines = [line for line in extra.splitlines()
+                 if "=" in line and not line.lstrip().startswith("#")
+                 and line.partition("=")[0].strip() not in keys]
+        if not lines:
+            continue
+        try:
+            with open(dest, "a") as fh:
+                if not body.endswith("\n"):
+                    fh.write("\n")
+                fh.write("# added by kodi-retrobox: templates/autoconfig-additions/%s\n"
+                         % name)
+                for line in lines:
+                    fh.write(line + "\n")
+        except OSError:
+            continue
+        added += len(lines)
+    return added
 
 
 # The last set of incomplete games somebody was told about. Without it the
