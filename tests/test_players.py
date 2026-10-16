@@ -573,55 +573,101 @@ c0.slot = 2
 check(m.core_of(["-L", "/x/cores/snes9x_libretro.so", "game.sfc"]) == "snes9x",
       "the core is read off the command line")
 rdir = tempfile.mkdtemp()
-m.REMAP_DIR = rdir
+m.REMAP_DIR = os.path.join(rdir, "remaps")
+m.OPTIONS_DIR = os.path.join(rdir, "config")
+m.ADAPTER_FILES = os.path.join(rdir, "owned.json")
+m.publisher_of = lambda rom, system=None: PUBLISHERS.get(os.path.basename(rom), "")
+PUBLISHERS = {"NHL 95.md": "Electronic Arts", "Mega Bomberman.md": "SEGA"}
 open(cfg, "w").write("")
 rom = "/games/snes/Bomber/Bomber.sfc"
-rmp = os.path.join(rdir, "Snes9x", "Bomber.rmp")
+rmp = os.path.join(m.REMAP_DIR, "Snes9x", "Bomber.rmp")
 
 
-def remap():
+def read(path):
     try:
-        return open(rmp).read()
+        return open(path).read()
     except OSError:
         return None
 
 
 m.place_adapter("snes9x", rom, [c0, c1, pro, xb])
-check(remap() is not None and 'input_libretro_device_p2 = "257"' in remap(),
-      "SNES gets the multitap on port 2, as a game remap, got %r" % remap())
-check(remap().startswith(m.ADAPTER_MARK), "marked as ours")
+check(read(rmp) is not None and 'input_libretro_device_p2 = "257"' in read(rmp),
+      "SNES gets the multitap on port 2, as a game remap, got %r" % read(rmp))
+check(rmp in m.owned_files(), "and the file is recorded as ours")
 check('input_libretro_device_p2' not in override_text([c0, c1, pro, xb], 4),
       "and not in the appended config, which RetroArch ignores for this")
+
+print("-- RetroArch rewriting our remap does not make it somebody else's --")
+open(rmp, "w").write('input_libretro_device_p2 = "257"\ninput_turbo_enable = "true"\n')
 c0.slot = xb.slot = None
 m.place_adapter("snes9x", rom, [c1, pro])
-check(remap() is None, "two players take our remap back out")
+check(read(rmp) is None, "two players take our remap back out, rewritten or not")
+check(rmp not in m.owned_files(), "and forget it")
 c0.slot = 3
 m.place_adapter("snes9x", rom, [c0, c1, pro])
-check(remap() is not None, "player 4 alone, with 3 empty, still needs it")
+check(read(rmp) is not None, "player 4 alone, with 3 empty, still needs it")
+
+print("-- a file from before the list, with the old mark, is still ours --")
+os.unlink(rmp)
+m.set_owned(rmp, False)
+open(rmp, "w").write(m.ADAPTER_MARK + '\ninput_libretro_device_p2 = "257"\n')
+m.place_adapter("snes9x", rom, [c1, pro])
+check(read(rmp) is None, "taken out")
 
 print("-- someone's own remap is kept underneath, or left alone --")
-open(os.path.join(rdir, "Snes9x", "Snes9x.rmp"), "w").write(
+open(os.path.join(m.REMAP_DIR, "Snes9x", "Snes9x.rmp"), "w").write(
     'input_player1_btn_b = "8"\ninput_libretro_device_p2 = "1"\n')
 m.place_adapter("snes9x", rom, [c0, c1, pro])
-check('input_player1_btn_b = "8"' in remap(), "the core-wide remap's buttons carry over")
-check(remap().count("input_libretro_device_p2") == 1
-      and 'input_libretro_device_p2 = "257"' in remap(),
-      "with the port replaced, not duplicated, got %r" % remap())
+check('input_player1_btn_b = "8"' in read(rmp), "the core-wide remap's buttons carry over")
+check(read(rmp).count("input_libretro_device_p2") == 1
+      and 'input_libretro_device_p2 = "257"' in read(rmp),
+      "with the port replaced, not duplicated, got %r" % read(rmp))
+os.unlink(rmp)
+m.set_owned(rmp, False)
 open(rmp, "w").write('input_player1_btn_a = "0"\n')
 m.place_adapter("snes9x", rom, [c0, c1, pro])
-check(remap() == 'input_player1_btn_a = "0"\n', "a game remap of theirs is untouched")
+check(read(rmp) == 'input_player1_btn_a = "0"\n', "a game remap of theirs is untouched")
 c0.slot = None
 m.place_adapter("snes9x", rom, [c1, pro])
-check(remap() is not None, "and never deleted")
+check(read(rmp) is not None, "and never deleted")
 
-print("-- NES gets the Four Score; a four-port core gets nothing --")
+print("-- NES gets the Four Score, as FCEUmm numbers its Gamepad --")
 c0.slot = 2
 m.place_adapter("fceumm", "/games/nes/G.nes", [c0, c1, pro])
-nes = open(os.path.join(rdir, "FCEUmm", "G.rmp")).read()
-check('input_libretro_device_p3 = "257"' in nes and 'input_libretro_device_p4 = "257"' in nes,
-      "both of the Four Score's ports, got %r" % nes)
+nes = read(os.path.join(m.REMAP_DIR, "FCEUmm", "G.rmp"))
+check('input_libretro_device_p3 = "513"' in nes and 'input_libretro_device_p4 = "513"' in nes,
+      "513 on both of the Four Score's ports, got %r" % nes)
+
+print("-- Genesis: EA's 4-Way Play or Sega's Team Player, by publisher --")
+m.place_adapter("genesis_plus_gx_wide", "/games/md/NHL 95.md", [c0, c1, pro])
+ea = read(os.path.join(m.REMAP_DIR, "Genesis Plus GX Wide", "NHL 95.md".replace(".md", ".rmp")))
+check('input_libretro_device_p1 = "1025"' in ea and 'input_libretro_device_p2 = "1025"' in ea,
+      "an EA game gets 4-Way Play across both ports, got %r" % ea)
+m.place_adapter("genesis_plus_gx_wide", "/games/md/Mega Bomberman.md", [c0, c1, pro])
+sega = read(os.path.join(m.REMAP_DIR, "Genesis Plus GX Wide", "Mega Bomberman.rmp"))
+check('input_libretro_device_p1 = "1537"' in sega and "_p2" not in sega,
+      "anything else gets the Team Player on port 1, got %r" % sega)
+
+print("-- PlayStation: a core option, kept on top of the core's own options --")
+os.makedirs(os.path.join(m.OPTIONS_DIR, "Beetle PSX HW"))
+open(os.path.join(m.OPTIONS_DIR, "Beetle PSX HW", "Beetle PSX HW.opt"), "w").write(
+    'beetle_psx_hw_renderer = "hardware"\nbeetle_psx_hw_enable_multitap_port1 = "disabled"\n')
+opt = os.path.join(m.OPTIONS_DIR, "Beetle PSX HW", "MMV3.opt")
+m.place_adapter("mednafen_psx_hw", "/games/psx/MMV3.cue", [c0, c1, pro])
+check('beetle_psx_hw_enable_multitap_port1 = "enabled"' in read(opt)
+      and read(opt).count("multitap_port1") == 1,
+      "the multitap is on, once, got %r" % read(opt))
+check('beetle_psx_hw_renderer = "hardware"' in read(opt),
+      "and the core's other options are carried over")
+c0.slot = None
+m.place_adapter("mednafen_psx_hw", "/games/psx/MMV3.cue", [c1, pro])
+check(read(opt) is None, "two players take it back out")
+
+print("-- a core with four ports of its own gets nothing --")
+c0.slot = 2
 m.place_adapter("mupen64plus_next", "/games/n64/M.z64", [c0, c1, pro])
-check(sorted(os.listdir(rdir)) == ["FCEUmm", "Snes9x"], "nothing written for N64")
+check(not os.path.exists(os.path.join(m.REMAP_DIR, "Mupen64Plus-Next")),
+      "nothing written for N64")
 shutil.rmtree(rdir)
 
 print("-- pads are numbered by sysfs path, the way libudev lists them --")

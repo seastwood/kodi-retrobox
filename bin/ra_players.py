@@ -14,6 +14,8 @@ input_playerN_joypad_index.
 """
 
 import glob
+import importlib.machinery
+import importlib.util
 import shutil
 import socket
 import json
@@ -2316,23 +2318,56 @@ RA_PORTS = 16
 # offers two-player modes only -- or, like Super Bomberman, fills players 3
 # and 4 with the computer.
 #
-# {core: (library name, [(port, device id, first player)])}: the device goes in
-# when someone has claimed that player or a later one. The library name is the
-# folder RetroArch keeps the core's remaps in.
+# Every adapter here keeps the picker's numbering: player N is RetroArch
+# port N. Two kinds, because cores disagree about where the switch is:
+#
+#   "ports":   a device on a port. RetroArch reads input_libretro_device_pN
+#              from a remap file and nowhere else (input_remapping_load_file),
+#              so it goes in the game's remap.
+#   "options": a core option, which goes in the game's core-options file.
+#
+# Device ids are RETRO_DEVICE_SUBCLASS(JOYPAD, n) = ((n + 1) << 8) | 1, from
+# each core's own source.
 ADAPTERS = {
-    # The Super Multitap, in port 2: player 1 stays on port 1, players 2-5 are
-    # the multitap's. RETRO_DEVICE_JOYPAD_MULTITAP, (1 << 8) | JOYPAD.
-    "snes9x": ("Snes9x", [(2, 257, 3)]),
-    # The Four Score. FCEUmm turns it on for the games in its own database and
-    # nowhere else; "Gamepad" on port 3 or 4 turns it on for any game.
-    # RETRO_DEVICE_GAMEPAD, SUBCLASS(JOYPAD, 1).
-    "fceumm": ("FCEUmm", [(3, 257, 3), (4, 257, 3)]),
+    # The Super Multitap, in port 2: port 1 is player 1, the multitap is
+    # players 2-5. RETRO_DEVICE_JOYPAD_MULTITAP, SUBCLASS(JOYPAD, 0).
+    "snes9x": {"library": "Snes9x", "ports": {2: 257}},
+    # The Four Score: "Gamepad" on ports 3 and 4, SUBCLASS(JOYPAD, 1) = 513.
+    # FCEUmm turns it on by itself only for games in its own list.
+    "fceumm": {"library": "FCEUmm", "ports": {3: 513, 4: 513}},
+    # Genesis and Sega CD: which adapter depends on the game; see
+    # genesis_ports. Both kinds go in port 1, where Genesis Plus GX gives
+    # each pad on them the next player number in turn (1-4).
+    "genesis_plus_gx_wide": {"library": "Genesis Plus GX Wide", "ports": "genesis"},
+    "genesis_plus_gx": {"library": "Genesis Plus GX", "ports": "genesis"},
+    # PlayStation: a multitap on port 1 is players 1-4 (1A-1D).
+    "mednafen_psx_hw": {"library": "Beetle PSX HW",
+                        "options": {"beetle_psx_hw_enable_multitap_port1": "enabled"}},
+    "mednafen_psx": {"library": "Beetle PSX",
+                     "options": {"beetle_psx_enable_multitap_port1": "enabled"}},
 }
+ADAPTER_FROM = 3                 # the first player that needs one
+
+# EA's 4-Way Play and Sega's Team Player are different hardware, and a game
+# reads only the one it was written for -- the core cannot tell which. EA
+# published the 4-Way Play games; everything else that takes four players
+# uses the Team Player. 3-button pads in both: six-button pads confuse some
+# older games, and none of these needs the extra buttons.
+WAYPLAY_3B = 1025                # RETRO_DEVICE_MDPAD_3B_WAYPLAY, SUBCLASS(JOYPAD, 3)
+TEAMPLAYER_3B = 1537             # RETRO_DEVICE_MDPAD_3B_TEAMPLAYER, SUBCLASS(JOYPAD, 5)
+WAYPLAY_PUBLISHERS = ("Electronic Arts", "EA Sports")
+GENESIS_RDB = "Sega - Mega Drive - Genesis"
 
 # Where RetroArch looks for remaps when retroarch.cfg names nowhere else.
 REMAP_DIR = os.path.expanduser("~/.config/retroarch/config/remaps")
-# First line of a remap this program wrote, and so may replace or delete. A
-# remap without it is somebody's own and is never touched.
+# ... and for core options, beside it.
+OPTIONS_DIR = os.path.expanduser("~/.config/retroarch/config")
+# The files this program made, and so may rewrite or delete. A list rather
+# than a mark inside each file: RetroArch rewrites remaps and core options
+# when a game closes, and its copy keeps nothing it does not know. Anything
+# not listed here is somebody's own and is never touched.
+ADAPTER_FILES = os.path.expanduser("~/.local/state/retroarch/adapter-files.json")
+# What earlier versions put on a file's first line instead. Still honoured.
 ADAPTER_MARK = "# kodi-retrobox: multiplayer adapter, managed by the player picker"
 
 
@@ -2344,71 +2379,128 @@ def core_of(args):
     return ""
 
 
-def adapter_lines(core, claimed):
+def publisher_of(rom, system=GENESIS_RDB):
+    """Who published this game, from libretro's database, or ""."""
+    try:
+        here = os.path.dirname(os.path.realpath(__file__))
+        loader = importlib.machinery.SourceFileLoader(
+            "sync_games", os.path.join(here, "sync_games.py"))
+        sg = importlib.util.module_from_spec(
+            importlib.util.spec_from_loader("sync_games", loader))
+        loader.exec_module(sg)
+        rows = sg.read_rdb(os.path.join(sg.RDB, system + ".rdb"))
+    except Exception as exc:      # a missing database must not stop a game
+        log_line("could not read the %s database: %s" % (system, exc))
+        return ""
+    stem = os.path.splitext(os.path.basename(rom))[0]
+    for row in rows:
+        if row.get("name") == stem:
+            value = row.get("publisher") or ""
+            return value.decode("utf-8", "replace") if isinstance(value, bytes) else value
+    return ""
+
+
+def genesis_ports(rom):
+    """The Genesis adapter this game was written for, on the ports it needs.
+
+    4-Way Play goes on BOTH ports: it is one device spanning the two, and
+    RetroArch sets port 2 after port 1, so a plain pad there would undo it.
+    """
+    publisher = publisher_of(rom)
+    if any(name in publisher for name in WAYPLAY_PUBLISHERS):
+        return {1: WAYPLAY_3B, 2: WAYPLAY_3B}
+    return {1: TEAMPLAYER_3B}
+
+
+def adapter_needed(claimed):
+    """Whether anybody has claimed a player that needs the adapter."""
+    return bool(claimed) and max(p.slot for p in claimed) + 1 >= ADAPTER_FROM
+
+
+def adapter_lines(core, claimed, rom=""):
     """(port, device) pairs plugging in the multiplayer adapter, if needed."""
-    if not claimed:
+    ports = ADAPTERS.get(core, {}).get("ports")
+    if not ports or not adapter_needed(claimed):
         return []
-    players = max(p.slot for p in claimed) + 1
-    return [(port, device) for port, device, first in ADAPTERS.get(core, ("", []))[1]
-            if players >= first]
+    if ports == "genesis":
+        ports = genesis_ports(rom)
+    return sorted(ports.items())
 
 
-def remap_dir():
-    """RetroArch's remap folder: retroarch.cfg's, else its default."""
+def cfg_dir(key, default):
+    """A folder retroarch.cfg names, else RetroArch's default for it."""
     try:
         for line in open(RA_CFG):
-            key, _, value = line.partition("=")
-            if key.strip() == "input_remapping_directory":
+            name, _, value = line.partition("=")
+            if name.strip() == key:
                 value = value.strip().strip('"')
                 if value and value != "default":
                     return os.path.expanduser(value)
     except OSError:
         pass
-    return REMAP_DIR
+    return default
 
 
-def place_adapter(core, rom, claimed):
-    """Plug the multiplayer adapter in for this game, or take ours back out.
+def remap_dir():
+    """RetroArch's remap folder."""
+    return cfg_dir("input_remapping_directory", REMAP_DIR)
 
-    It has to be a remap file. RetroArch reads input_libretro_device_pN from
-    remaps and nowhere else (input_remapping_load_file in configuration.c), so
-    the same line in the --appendconfig fragment -- where this first went --
-    is silently ignored, and Super Bomberman went on offering only computer
-    players for 3 and 4.
 
-    The file is the game's own remap, which RetroArch picks ahead of the
-    content-folder and core-wide ones, and so would hide them: whichever of
-    those would have loaded is copied in underneath, so its button remaps
-    still apply. A game remap somebody made is left alone, adapter or not.
-    """
-    if core not in ADAPTERS or not rom:
-        return
-    library = ADAPTERS[core][0]
-    folder = os.path.join(remap_dir(), library)
-    stem = os.path.splitext(os.path.basename(rom))[0]
-    path = os.path.join(folder, stem + ".rmp")
+def owned_files():
+    try:
+        return set(json.load(open(ADAPTER_FILES)))
+    except (OSError, ValueError, TypeError):
+        return set()
+
+
+def set_owned(path, owned):
+    files = owned_files()
+    if owned:
+        files.add(path)
+    else:
+        files.discard(path)
+    try:
+        os.makedirs(os.path.dirname(ADAPTER_FILES), exist_ok=True)
+        with open(ADAPTER_FILES, "w") as fh:
+            json.dump(sorted(files), fh, indent=1)
+    except OSError as exc:
+        log_line("could not record %s: %s" % (ADAPTER_FILES, exc))
+
+
+def is_ours(path):
+    if path in owned_files():
+        return True
     try:
         with open(path) as fh:
-            ours = fh.readline().rstrip("\n") == ADAPTER_MARK
+            return fh.readline().rstrip("\n") == ADAPTER_MARK
     except OSError:
-        ours = not os.path.exists(path)
-    if not ours:
-        log_line("%s has a remap of its own; not adding the multiplayer adapter"
-                 % stem)
+        return False
+
+
+def place_game_file(path, bases, values, label):
+    """Write `values` into this game's own config file, or take ours away.
+
+    RetroArch reads the game's file ahead of the content-folder and core-wide
+    ones and does not merge them, so a game file hides them: the first of
+    `bases` that exists is copied in underneath, keeping everything somebody
+    set there. A game file somebody made is left alone, adapter or not.
+    """
+    if os.path.exists(path) and not is_ours(path):
+        log_line("%s has its own %s; not adding the multiplayer adapter"
+                 % (os.path.basename(path), label))
         return
-    lines = adapter_lines(core, claimed)
-    if not lines:
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
+    if not values:
+        if os.path.exists(path):
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+        set_owned(path, False)
         return
     base = ""
-    parent = os.path.basename(os.path.dirname(rom))
-    for candidate in (os.path.join(folder, parent + ".rmp"),
-                      os.path.join(folder, library + ".rmp")):
-        # Games here live in a folder of their own name, so the folder's remap
-        # is often this very file -- ours, from last time.
+    for candidate in bases:
+        # Games here live in a folder of their own name, so the folder's file
+        # is often this very one -- ours, from last time.
         if candidate == path:
             continue
         try:
@@ -2416,19 +2508,49 @@ def place_adapter(core, rom, claimed):
             break
         except OSError:
             continue
-    keys = {"input_libretro_device_p%d" % port for port, _ in lines}
     kept = [line for line in base.splitlines()
             if line != ADAPTER_MARK
-            and line.partition("=")[0].strip() not in keys]
-    os.makedirs(folder, exist_ok=True)
+            and line.partition("=")[0].strip() not in values]
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as fh:
-        fh.write(ADAPTER_MARK + "\n")
         for line in kept:
             fh.write(line + "\n")
-        for port, device in lines:
-            fh.write('input_libretro_device_p%d = "%d"\n' % (port, device))
-    log_line("multiplayer adapter in for %s (%s)" % (
-        stem, ", ".join("port %d" % port for port, _ in lines)))
+        for key, value in values.items():
+            fh.write('%s = "%s"\n' % (key, value))
+    set_owned(path, True)
+
+
+def place_adapter(core, rom, claimed):
+    """Plug the multiplayer adapter in for this game, or take ours back out."""
+    adapter = ADAPTERS.get(core)
+    if not adapter or not rom:
+        return
+    library = adapter["library"]
+    stem = os.path.splitext(os.path.basename(rom))[0]
+    parent = os.path.basename(os.path.dirname(rom))
+    if "ports" in adapter:
+        folder = os.path.join(remap_dir(), library)
+        lines = adapter_lines(core, claimed, rom)
+        place_game_file(
+            os.path.join(folder, stem + ".rmp"),
+            [os.path.join(folder, parent + ".rmp"),
+             os.path.join(folder, library + ".rmp")],
+            {"input_libretro_device_p%d" % port: device for port, device in lines},
+            "remap")
+        if lines:
+            log_line("multiplayer adapter in for %s (%s)" % (stem, ", ".join(
+                "port %d = %d" % (port, device) for port, device in lines)))
+    if "options" in adapter:
+        folder = os.path.join(cfg_dir("rgui_config_directory", OPTIONS_DIR), library)
+        values = adapter["options"] if adapter_needed(claimed) else {}
+        place_game_file(
+            os.path.join(folder, stem + ".opt"),
+            [os.path.join(folder, parent + ".opt"),
+             os.path.join(folder, library + ".opt")],
+            values, "core options")
+        if values:
+            log_line("multiplayer adapter in for %s (%s)"
+                     % (stem, ", ".join(sorted(values))))
 
 
 def write_override(pads, slots, fresh=False, slot=None):
