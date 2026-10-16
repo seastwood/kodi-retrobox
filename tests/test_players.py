@@ -435,14 +435,14 @@ print("-- unclaimed ports are parked, all the way to eight --")
 for port in (2, 4, 5, 6, 7, 8):
     check('input_player%d_joypad_index = "%d"' % (port, m.PARKED) in text,
           "player %d parked" % port)
-check(text.count("joypad_index") == 8, "eight ports written, got %d"
+check(text.count("joypad_index") == 16, "all sixteen ports written, got %d"
       % text.count("joypad_index"))
+check('input_player5_joypad_index = "%d"' % m.PARKED in override_text([p0, p1], 4),
+      "port 5 is parked even on a four-slot board, or a multitap makes the "
+      "fifth pad a second player")
+check('remap_save_on_exit = "false"' in text,
+      "RetroArch may not rewrite the adapter remap and drop its mark")
 
-print("-- with four slots only four ports are written --")
-p0.slot, p1.slot = 0, 2
-text4 = override_text([p0, p1], 4)
-check(text4.count("joypad_index") == 4, "four ports, got %d"
-      % text4.count("joypad_index"))
 
 print("-- no keyboard player means no keyboard lines at all --")
 check("input_player1_a =" not in text, "the config's own binds are left alone")

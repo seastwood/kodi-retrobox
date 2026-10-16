@@ -2308,6 +2308,8 @@ def guard_override():
 # so 99 wrote past the end of it on every launch with an empty port. 15 is in
 # range and is only a real pad when sixteen are plugged in.
 PARKED = 15
+# RetroArch's player ports (MAX_USERS); every one is given a pad or parked.
+RA_PORTS = 16
 
 # The adapter a console needed for players 3 and up. Without it the core shows
 # the game two controllers however many were picked, and a four-player game
@@ -2440,6 +2442,11 @@ def write_override(pads, slots, fresh=False, slot=None):
     fd, path = new_override("ra_players_")
     with os.fdopen(fd, "w") as fh:
         fh.write(NO_PAD_MENU)
+        # RetroArch rewrites a loaded remap when the game closes, and the copy
+        # it writes drops ADAPTER_MARK -- after which the picker takes the
+        # file for somebody's own and stops managing it. Saving one from the
+        # menu still works; only the silent save on exit is off.
+        fh.write('remap_save_on_exit = "false"\n')
         reserved = {}
         for p in sorted((p for p in claimed if p.kind == "pad"),
                         key=lambda p: p.slot):
@@ -2447,8 +2454,14 @@ def write_override(pads, slots, fresh=False, slot=None):
             reserved[p.slot] = p.name
         # Park unclaimed ports on an index no pad has, so a stray pad (or the
         # keyboard-backed port) does not silently take player 1.
+        #
+        # All of RetroArch's ports, not just the ones on the picker's board.
+        # One left out keeps its default -- port N on pad N-1 -- and a
+        # multitap makes port 5 a real player: on ultra the fifth pad (the
+        # Xbox) was player 4 by the picker and player 5 by default, so it
+        # drove two bombermen while one picked PowerA pad drove none.
         used = {p.slot for p in claimed if p.kind == "pad"}
-        for s in range(ports):
+        for s in range(RA_PORTS):
             if s not in used:
                 fh.write('input_player%d_joypad_index = "%d"\n' % (s + 1, PARKED))
         # Hold each port for the controller that claimed it, so unplugging a
