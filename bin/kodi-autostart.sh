@@ -37,6 +37,19 @@ KODI_LOG="$HOME/.kodi/temp/kodi.log"
 RESTORE_REQ="$HOME/.local/state/restore-request"
 RESTORE_LOG="$HOME/.local/state/restore.log"
 
+# Kodi's own PipeWire output, not PulseAudio through PipeWire's stand-in for
+# it. Through the stand-in, Kodi's sense of how much sound is still queued
+# drifts; it reads that as the soundtrack running out of step with the picture
+# and drops a chunk to catch up ("Changed max allowed Out-Of-Sync value to 100
+# ms due self-learning"). Measured on ultra with a steady test tone: 11 silent
+# gaps of 80-170 ms in 18 seconds -- the sound "cutting in and out" in every
+# film -- and none with the native output. Only where PipeWire is what is
+# running and this Kodi was built with it; anywhere else Kodi picks as before.
+if [ -z "$KODI_AE_SINK" ] && pgrep -x pipewire >/dev/null 2>&1 \
+        && grep -qa CPipewireStream /usr/lib/*/kodi/kodi.bin 2>/dev/null; then
+    export KODI_AE_SINK=PIPEWIRE
+fi
+
 # A JoyShockMapper left over from a game types into whatever has focus, and
 # once Kodi is the thing with focus that is the menu. With no hold file there
 # is no game entitled to the screen, so anything still running is a leftover.
