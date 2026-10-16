@@ -7,6 +7,7 @@ import importlib.machinery
 import importlib.util
 import os
 import sys
+import shutil
 import tempfile
 
 def repo_script(name):
@@ -61,8 +62,8 @@ def key(code, value=1):
     return Event(e.EV_KEY, code, value)
 
 
-def override_text(pads, slots, core=""):
-    path = m.write_override(pads, slots, core=core)
+def override_text(pads, slots):
+    path = m.write_override(pads, slots)
     text = open(path).read()
     os.unlink(path)
     return text
@@ -571,20 +572,57 @@ print("-- the multiplayer adapter goes in for player 3 and up --")
 c0.slot = 2
 check(m.core_of(["-L", "/x/cores/snes9x_libretro.so", "game.sfc"]) == "snes9x",
       "the core is read off the command line")
-text = override_text([c0, c1, pro, xb], 4, core="snes9x")
-check('input_libretro_device_p2 = "257"' in text, "SNES gets the multitap on port 2")
-text = override_text([c0, c1, pro, xb], 4, core="fceumm")
-check('input_libretro_device_p3 = "257"' in text
-      and 'input_libretro_device_p4 = "257"' in text, "NES gets the Four Score")
+rdir = tempfile.mkdtemp()
+m.REMAP_DIR = rdir
+open(cfg, "w").write("")
+rom = "/games/snes/Bomber/Bomber.sfc"
+rmp = os.path.join(rdir, "Snes9x", "Bomber.rmp")
+
+
+def remap():
+    try:
+        return open(rmp).read()
+    except OSError:
+        return None
+
+
+m.place_adapter("snes9x", rom, [c0, c1, pro, xb])
+check(remap() is not None and 'input_libretro_device_p2 = "257"' in remap(),
+      "SNES gets the multitap on port 2, as a game remap, got %r" % remap())
+check(remap().startswith(m.ADAPTER_MARK), "marked as ours")
+check('input_libretro_device_p2' not in override_text([c0, c1, pro, xb], 4),
+      "and not in the appended config, which RetroArch ignores for this")
 c0.slot = xb.slot = None
-text = override_text([c0, c1, pro, xb], 4, core="snes9x")
-check("input_libretro_device" not in text, "two players leave the ports alone")
+m.place_adapter("snes9x", rom, [c1, pro])
+check(remap() is None, "two players take our remap back out")
 c0.slot = 3
-text = override_text([c0, c1, pro, xb], 4, core="snes9x")
-check('input_libretro_device_p2 = "257"' in text,
-      "player 4 alone, with 3 empty, still needs it")
-text = override_text([c0, c1, pro, xb], 4, core="mupen64plus_next")
-check("input_libretro_device" not in text, "a core with four ports gets nothing")
+m.place_adapter("snes9x", rom, [c0, c1, pro])
+check(remap() is not None, "player 4 alone, with 3 empty, still needs it")
+
+print("-- someone's own remap is kept underneath, or left alone --")
+open(os.path.join(rdir, "Snes9x", "Snes9x.rmp"), "w").write(
+    'input_player1_btn_b = "8"\ninput_libretro_device_p2 = "1"\n')
+m.place_adapter("snes9x", rom, [c0, c1, pro])
+check('input_player1_btn_b = "8"' in remap(), "the core-wide remap's buttons carry over")
+check(remap().count("input_libretro_device_p2") == 1
+      and 'input_libretro_device_p2 = "257"' in remap(),
+      "with the port replaced, not duplicated, got %r" % remap())
+open(rmp, "w").write('input_player1_btn_a = "0"\n')
+m.place_adapter("snes9x", rom, [c0, c1, pro])
+check(remap() == 'input_player1_btn_a = "0"\n', "a game remap of theirs is untouched")
+c0.slot = None
+m.place_adapter("snes9x", rom, [c1, pro])
+check(remap() is not None, "and never deleted")
+
+print("-- NES gets the Four Score; a four-port core gets nothing --")
+c0.slot = 2
+m.place_adapter("fceumm", "/games/nes/G.nes", [c0, c1, pro])
+nes = open(os.path.join(rdir, "FCEUmm", "G.rmp")).read()
+check('input_libretro_device_p3 = "257"' in nes and 'input_libretro_device_p4 = "257"' in nes,
+      "both of the Four Score's ports, got %r" % nes)
+m.place_adapter("mupen64plus_next", "/games/n64/M.z64", [c0, c1, pro])
+check(sorted(os.listdir(rdir)) == ["FCEUmm", "Snes9x"], "nothing written for N64")
+shutil.rmtree(rdir)
 
 print("-- pads are numbered by sysfs path, the way libudev lists them --")
 order = sorted(["/sys/devices/pci0/usb1/1-9/1-9:1.0/input/input30/event18",
@@ -596,7 +634,6 @@ check([o.rsplit("/", 1)[1] for o in order] == ["event3", "event5", "event19", "e
       "port 1-8 before 1-9 whatever the event number, and 1-1 before the hub "
       "behind it, got %r" % order)
 
-import shutil
 shutil.rmtree(tmp)
 print()
 print("FAILURES: %d" % len(fails))

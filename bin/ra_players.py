@@ -2311,17 +2311,27 @@ PARKED = 15
 
 # The adapter a console needed for players 3 and up. Without it the core shows
 # the game two controllers however many were picked, and a four-player game
-# offers two-player modes only. {core: [(port, device id, first player)]}:
-# the device goes in when someone has claimed that player or a later one.
+# offers two-player modes only -- or, like Super Bomberman, fills players 3
+# and 4 with the computer.
+#
+# {core: (library name, [(port, device id, first player)])}: the device goes in
+# when someone has claimed that player or a later one. The library name is the
+# folder RetroArch keeps the core's remaps in.
 ADAPTERS = {
     # The Super Multitap, in port 2: player 1 stays on port 1, players 2-5 are
     # the multitap's. RETRO_DEVICE_JOYPAD_MULTITAP, (1 << 8) | JOYPAD.
-    "snes9x": [(2, 257, 3)],
+    "snes9x": ("Snes9x", [(2, 257, 3)]),
     # The Four Score. FCEUmm turns it on for the games in its own database and
     # nowhere else; "Gamepad" on port 3 or 4 turns it on for any game.
     # RETRO_DEVICE_GAMEPAD, SUBCLASS(JOYPAD, 1).
-    "fceumm": [(3, 257, 3), (4, 257, 3)],
+    "fceumm": ("FCEUmm", [(3, 257, 3), (4, 257, 3)]),
 }
+
+# Where RetroArch looks for remaps when retroarch.cfg names nowhere else.
+REMAP_DIR = os.path.expanduser("~/.config/retroarch/config/remaps")
+# First line of a remap this program wrote, and so may replace or delete. A
+# remap without it is somebody's own and is never touched.
+ADAPTER_MARK = "# kodi-retrobox: multiplayer adapter, managed by the player picker"
 
 
 def core_of(args):
@@ -2337,11 +2347,89 @@ def adapter_lines(core, claimed):
     if not claimed:
         return []
     players = max(p.slot for p in claimed) + 1
-    return [(port, device) for port, device, first in ADAPTERS.get(core, [])
+    return [(port, device) for port, device, first in ADAPTERS.get(core, ("", []))[1]
             if players >= first]
 
 
-def write_override(pads, slots, fresh=False, slot=None, core=""):
+def remap_dir():
+    """RetroArch's remap folder: retroarch.cfg's, else its default."""
+    try:
+        for line in open(RA_CFG):
+            key, _, value = line.partition("=")
+            if key.strip() == "input_remapping_directory":
+                value = value.strip().strip('"')
+                if value and value != "default":
+                    return os.path.expanduser(value)
+    except OSError:
+        pass
+    return REMAP_DIR
+
+
+def place_adapter(core, rom, claimed):
+    """Plug the multiplayer adapter in for this game, or take ours back out.
+
+    It has to be a remap file. RetroArch reads input_libretro_device_pN from
+    remaps and nowhere else (input_remapping_load_file in configuration.c), so
+    the same line in the --appendconfig fragment -- where this first went --
+    is silently ignored, and Super Bomberman went on offering only computer
+    players for 3 and 4.
+
+    The file is the game's own remap, which RetroArch picks ahead of the
+    content-folder and core-wide ones, and so would hide them: whichever of
+    those would have loaded is copied in underneath, so its button remaps
+    still apply. A game remap somebody made is left alone, adapter or not.
+    """
+    if core not in ADAPTERS or not rom:
+        return
+    library = ADAPTERS[core][0]
+    folder = os.path.join(remap_dir(), library)
+    stem = os.path.splitext(os.path.basename(rom))[0]
+    path = os.path.join(folder, stem + ".rmp")
+    try:
+        with open(path) as fh:
+            ours = fh.readline().rstrip("\n") == ADAPTER_MARK
+    except OSError:
+        ours = not os.path.exists(path)
+    if not ours:
+        log_line("%s has a remap of its own; not adding the multiplayer adapter"
+                 % stem)
+        return
+    lines = adapter_lines(core, claimed)
+    if not lines:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        return
+    base = ""
+    parent = os.path.basename(os.path.dirname(rom))
+    for candidate in (os.path.join(folder, parent + ".rmp"),
+                      os.path.join(folder, library + ".rmp")):
+        # Games here live in a folder of their own name, so the folder's remap
+        # is often this very file -- ours, from last time.
+        if candidate == path:
+            continue
+        try:
+            base = open(candidate).read()
+            break
+        except OSError:
+            continue
+    keys = {"input_libretro_device_p%d" % port for port, _ in lines}
+    kept = [line for line in base.splitlines()
+            if line != ADAPTER_MARK
+            and line.partition("=")[0].strip() not in keys]
+    os.makedirs(folder, exist_ok=True)
+    with open(path, "w") as fh:
+        fh.write(ADAPTER_MARK + "\n")
+        for line in kept:
+            fh.write(line + "\n")
+        for port, device in lines:
+            fh.write('input_libretro_device_p%d = "%d"\n' % (port, device))
+    log_line("multiplayer adapter in for %s (%s)" % (
+        stem, ", ".join("port %d" % port for port, _ in lines)))
+
+
+def write_override(pads, slots, fresh=False, slot=None):
     """Write a RetroArch config fragment binding claimed devices to ports."""
     claimed = [p for p in pads if p.slot is not None]
     kbd_slot = next((p.slot for p in claimed if p.kind == "kbd"), None)
@@ -2404,8 +2492,6 @@ def write_override(pads, slots, fresh=False, slot=None, core=""):
                      % (s + 1, name or ""))
             fh.write('input_player%d_device_reservation_type = "%d"\n'
                      % (s + 1, 2 if name and names.count(name) == 1 else 0))
-        for port, device in adapter_lines(core, claimed):
-            fh.write('input_libretro_device_p%d = "%d"\n' % (port, device))
         if kbd_slot is not None:
             # RetroArch merges every keyboard into one input, so a keyboard
             # player's binds have to live on exactly one port -- and be cleared
@@ -2685,9 +2771,11 @@ def play_once(args, cap, shader, fresh, asked, repick):
         # the game across in a slot of its own, and the resume point was put
         # aside when this game first started.
         preserve_auto_state(rom_of(args))
-    override = write_override(pads, slots, fresh, slot=load_slot,
-                              core=core_of(args)) \
+    override = write_override(pads, slots, fresh, slot=load_slot) \
         if launch else None
+    if launch:
+        place_adapter(core_of(args), rom_of(args),
+                      [p for p in pads if p.slot is not None])
     for p in pads:
         p.close()
     pygame.quit()
