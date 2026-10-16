@@ -76,6 +76,9 @@ REPICK_SECONDS = 2.0             # hold Select this long to change players
 # it again. The menu is still there on a keyboard, where F1 opens it.
 NO_PAD_MENU = 'input_menu_toggle_gamepad_combo = "0"\n' 
 REPICK = 90                      # run_retroarch: "the players are changing"
+RESEAT_SETTLE = 1.5              # quiet seconds before pads are put back
+RESEAT_GAP = 20                  # and never more often than this
+LAST_RESEAT = [0.0]
 RESUME_WAIT = 45                 # how long a relaunched game gets to answer
 # Somebody in a browser asking for the same thing. Written by fourth-player,
 # which already writes the guest names into this directory, and read here --
@@ -180,7 +183,7 @@ def udev_joystick(path, guess):
         return guess
 
 
-def joystick_devices():
+def joystick_devices(everything=False):
     """Pads, each with the index RetroArch's udev driver will give it.
 
     Every device udev calls a joystick takes a number in RetroArch, including
@@ -199,18 +202,27 @@ def joystick_devices():
         abss = set(caps.get(evdev.ecodes.EV_ABS, []))
         # A pad has gamepad buttons and at least a main stick
         usable = bool(keys & (BTN_A | BTN_B)) and evdev.ecodes.ABS_X in abss
-        if udev_joystick(path, usable):
+        # RetroArch also refuses a joystick it cannot open, or one with no
+        # buttons at all (udev_open_joystick), and such a device takes no
+        # number there -- so it must take none here either.
+        if (udev_joystick(path, usable)
+                and evdev.ecodes.EV_KEY in caps):
             found.append((udev_order(path), usable, path, dev))
         else:
             dev.close()
     found.sort(key=lambda t: t[0])
     out = []
     for i, (_order, usable, path, dev) in enumerate(found):
-        if usable:
+        if usable or everything:
             out.append((i, path, dev))
         else:
             dev.close()
     return out
+
+
+def joystick_devices_all():
+    """Every node RetroArch gives a number, usable on the picker or not."""
+    return joystick_devices(everything=True)
 
 
 def keyboard_devices():
@@ -831,6 +843,14 @@ class Repick(threading.Event):
         super().__init__()
         self.slot = None
         self.override = None
+        # Who is playing which player, for putting them back after a pad drops
+        # out mid-game (watch_reseat): [{"slot", "kind", "ident"}], and the
+        # board size the override was written for. Set on every launch.
+        self.seats = []
+        self.board = MAX_PLAYERS
+        # Set instead of an ordinary repick when the game is being relaunched
+        # only to put pads back on their players: no picker, same people.
+        self.reseat = False
 
 
 def start_repick(repick, rom):
@@ -848,6 +868,201 @@ def start_repick(repick, rom):
         # borrowed saves back rather than leaving them borrowed for ever.
         repick.clear()
         restore_carried()
+
+
+def device_ident(dev):
+    """(name, uniq, phys): what tells one physical controller from another.
+
+    uniq is a Bluetooth pad's address, which survives any reconnect. phys is a
+    wired pad's USB port, which survives an unplug and replug into the same
+    socket. The name alone tells two identical pads apart from nothing else.
+    """
+    return (getattr(dev, "name", "") or "",
+            getattr(dev, "uniq", "") or "",
+            getattr(dev, "phys", "") or "")
+
+
+def sysfs_ident(path):
+    """device_ident for a node, read from sysfs without opening it."""
+    base = "/sys/class/input/%s/device/" % os.path.basename(path)
+    out = []
+    for field in ("name", "uniq", "phys"):
+        try:
+            out.append(open(base + field).read().strip())
+        except OSError:
+            out.append("")
+    return tuple(out)
+
+
+def match_seats(seats, devices):
+    """Which device each seat's controller is now: {seat index: device key}.
+
+    `seats` is [ident], `devices` is [(key, ident)]. First by name and a
+    Bluetooth address or USB port, which are exact; then by name alone, but
+    only where that leaves no choice -- one seat and one device of a name both
+    unaccounted for. Two identical wired pads moved to two new ports cannot be
+    told apart by anything, and guessing would swap two people.
+    """
+    found, used = {}, set()
+    for i, (name, uniq, phys) in enumerate(seats):
+        for key, (dname, duniq, dphys) in devices:
+            if key in used or dname != name:
+                continue
+            if (uniq and uniq == duniq) or (not uniq and phys and phys == dphys):
+                found[i] = key
+                used.add(key)
+                break
+    for i, (name, _uniq, _phys) in enumerate(seats):
+        if i in found:
+            continue
+        seats_left = [j for j, ident in enumerate(seats)
+                      if j not in found and ident[0] == name]
+        devs_left = [key for key, ident in devices
+                     if key not in used and ident[0] == name]
+        if len(seats_left) == 1 and len(devs_left) == 1:
+            found[i] = devs_left[0]
+            used.add(devs_left[0])
+    return found
+
+
+class SlotModel:
+    """Which /dev/input node sits in each of RetroArch's joypad slots.
+
+    RetroArch's own rule (udev_joypad.c), followed exactly: at startup, pads
+    in libudev order; a pad that arrives takes the LOWEST free slot
+    (udev_find_vacant_pad); one that leaves frees its slot; a "change" is a
+    leave and an arrival. So a pad that drops out and comes back usually lands
+    where it was -- but not if another pad left too, or a new one arrived in
+    between, and then somebody is driving the wrong player or nobody.
+    """
+
+    def __init__(self, paths):
+        self.slots = list(paths)
+        self.idents = {path: sysfs_ident(path) for path in paths}
+
+    def remove(self, path):
+        if path in self.slots:
+            self.slots[self.slots.index(path)] = None
+
+    def add(self, path):
+        if path in self.slots:
+            return
+        self.idents[path] = sysfs_ident(path)
+        if None in self.slots:
+            self.slots[self.slots.index(None)] = path
+        elif len(self.slots) < RA_PORTS:
+            self.slots.append(path)
+
+    def change(self, path):
+        self.remove(path)
+        self.add(path)
+
+    def devices(self):
+        return [(i, self.idents.get(path, ("", "", "")))
+                for i, path in enumerate(self.slots) if path is not None]
+
+
+def seats_misplaced(seats, model):
+    """The seats whose controller is present but in another player's slot."""
+    found = match_seats([seat["ident"] for seat in seats], model.devices())
+    return [seats[i] for i, slot in found.items() if slot != seats[i]["index"]]
+
+
+def joystick_paths():
+    """The nodes RetroArch numbers at startup, in its order."""
+    paths = []
+    for _index, path, dev in joystick_devices_all():
+        dev.close()
+        paths.append(path)
+    return paths
+
+
+def start_reseat(repick, rom):
+    """Park the game and close it, to bring it straight back with each pad on
+    its own player. start_repick, without the picker in between."""
+    repick.reseat = True
+    start_repick(repick, rom)
+    if not repick.is_set():
+        repick.reseat = False
+
+
+def watch_reseat(stop, repick, rom, seats):
+    """Put pads back on their players when one drops out and returns.
+
+    Follows the same udev events RetroArch does, in the same order, so the
+    model of who is in which slot is RetroArch's own. When a seated pad is
+    found in a slot other than its player's, the game is parked and relaunched
+    with the numbers right (RESEAT_SETTLE seconds after things go quiet, so a
+    pad reconnecting in several steps is relaunched for once). Never more than
+    once every RESEAT_GAP seconds, so a pad that keeps dropping cannot keep a
+    game restarting.
+    """
+    # A keyboard has no joypad slot to be in the wrong one of.
+    seats = [seat for seat in seats if seat["kind"] == "pad"]
+    if not seats:
+        return
+    try:
+        import pyudev
+        context = pyudev.Context()
+        monitor = pyudev.Monitor.from_netlink(context)
+        monitor.filter_by("input")
+        monitor.start()
+    except Exception as exc:      # no pyudev, or no netlink: just do without
+        log_line("not watching for pads changing places: %s" % exc)
+        return
+    model = SlotModel(joystick_paths())
+    pending = None
+    while not stop.is_set():
+        device = monitor.poll(timeout=0.5)
+        if device is not None:
+            node = device.device_node or ""
+            if (node.startswith("/dev/input/event")
+                    and device.properties.get("ID_INPUT_JOYSTICK") == "1"):
+                action = device.action
+                if action == "add":
+                    model.add(node)
+                elif action == "remove":
+                    model.remove(node)
+                elif action == "change":
+                    model.change(node)
+                # Any event restarts the wait once something is wrong, so a
+                # pad reconnecting in several steps is relaunched for once.
+                if pending is not None or seats_misplaced(seats, model):
+                    pending = time.time()
+            continue
+        if pending is None or time.time() - pending < RESEAT_SETTLE:
+            continue
+        pending = None
+        wrong = seats_misplaced(seats, model)
+        if not wrong or repick.is_set():
+            continue
+        if time.time() - LAST_RESEAT[0] < RESEAT_GAP:
+            log_line("a pad is on the wrong player again within %ds; "
+                     "leaving it (hold Select to fix)" % RESEAT_GAP)
+            continue
+        LAST_RESEAT[0] = time.time()
+        log_line("putting pads back on their players: %s" % ", ".join(
+            "%s (player %d)" % (seat["ident"][0], seat["slot"] + 1)
+            for seat in wrong))
+        start_reseat(repick, rom)
+
+
+def reseat_pads(seats):
+    """Fresh Pads for every device, each seated where its person was."""
+    pads = [Pad(index, path, dev, kind)
+            for kind, index, path, dev in input_devices()]
+    found = match_seats([seat["ident"] for seat in seats],
+                        [(i, p.ident) for i, p in enumerate(pads)])
+    for i, at in found.items():
+        if pads[at].kind == seats[i]["kind"]:
+            pads[at].slot = seats[i]["slot"]
+    return pads
+
+
+def seats_of(pads):
+    return [{"slot": p.slot, "kind": p.kind, "ident": p.ident,
+             "index": p.index}
+            for p in pads if p.slot is not None]
 
 
 def hold_pads(existing):
@@ -1054,7 +1269,7 @@ CHILD = [None]
 
 
 def run_retroarch(args, override=None, shader=None, repick=None,
-                  load_slot=None):
+                  load_slot=None, seats=None):
     """Start the game and stay alive long enough to see whether it worked.
 
     This used to be an os.execv. Nothing then watched the launch, and the Kodi
@@ -1114,6 +1329,9 @@ def run_retroarch(args, override=None, shader=None, repick=None,
     watcher = threading.Thread(target=watch_hold_to_exit,
                                args=(stop, None, repick, rom), daemon=True)
     watcher.start()
+    if seats and repick is not None:
+        threading.Thread(target=watch_reseat, args=(stop, repick, rom, seats),
+                         daemon=True).start()
     try:
         with open(LAUNCH_LOG, "w") as log:
             child = subprocess.Popen(cmd, stdout=log,
@@ -1722,6 +1940,10 @@ class Pad:
         self.path = path
         self.dev = dev
         self.name = dev.name         # the device name; RetroArch matches on it
+        # Which physical device this is, for finding it again after it drops
+        # out and comes back mid-game under a new /dev/input/eventN. See
+        # match_seats.
+        self.ident = device_ident(dev)
         # What to put on screen for it, which is not the same thing: a guest
         # who gave a name is a person, not a socket.
         self.display = guest_names().get(dev.name, dev.name)
@@ -2379,7 +2601,30 @@ ADAPTER_FROM = 3                 # the first player that needs one
 WAYPLAY_3B = 1025                # RETRO_DEVICE_MDPAD_3B_WAYPLAY, SUBCLASS(JOYPAD, 3)
 TEAMPLAYER_3B = 1537             # RETRO_DEVICE_MDPAD_3B_TEAMPLAYER, SUBCLASS(JOYPAD, 5)
 WAYPLAY_PUBLISHERS = ("Electronic Arts", "EA Sports")
+# Codemasters put the extra two ports on the cartridge itself (the J-Cart:
+# Micro Machines 2, Pete Sampras Tennis...), which Genesis Plus GX finds on
+# its own. Either adapter on top of it moves players 3 and 4 off their pads.
+JCART_PUBLISHERS = ("Codemasters",)
 GENESIS_RDB = "Sega - Mega Drive - Genesis"
+# Per-game answers for when the publisher gets it wrong, by playlist name:
+# "wayplay", "teamplayer", or None for nothing (a J-Cart, or a game that
+# takes four players some other way). Found by playing, not by guessing --
+# add a game here when it is seen offering fewer players than it should.
+GENESIS_ADAPTER = {
+}
+
+# Games the database counts as three or four players that pass one
+# controller round instead, so no adapter is plugged in for them. Kept to
+# games known to work that way: the database's genres cannot be trusted for
+# it (Super Bomberman is filed as a puzzle game, and Secret of Mana, a
+# role-playing game, takes three players on a multitap), and an adapter in a
+# game that does not use it is harmless, where one missing from a game that
+# does loses players.
+NO_ADAPTER = {
+    "Aerobiz (USA)",
+    "Aerobiz Supersonic (USA)",
+    "Vegas Dream (USA)",
+}
 
 # Where RetroArch looks for remaps when retroarch.cfg names nowhere else.
 REMAP_DIR = os.path.expanduser("~/.config/retroarch/config/remaps")
@@ -2429,21 +2674,37 @@ def genesis_ports(rom):
     4-Way Play goes on BOTH ports: it is one device spanning the two, and
     RetroArch sets port 2 after port 1, so a plain pad there would undo it.
     """
-    publisher = publisher_of(rom)
-    if any(name in publisher for name in WAYPLAY_PUBLISHERS):
+    stem = os.path.splitext(os.path.basename(rom))[0]
+    if stem in GENESIS_ADAPTER:
+        kind = GENESIS_ADAPTER[stem]
+    else:
+        publisher = publisher_of(rom)
+        # Some dumps carry no publisher but say so in the name instead.
+        if (any(name in publisher for name in JCART_PUBLISHERS)
+                or "J-Cart" in stem or "(Codemasters)" in stem):
+            kind = None
+        elif any(name in publisher for name in WAYPLAY_PUBLISHERS):
+            kind = "wayplay"
+        else:
+            kind = "teamplayer"
+    if kind == "wayplay":
         return {1: WAYPLAY_3B, 2: WAYPLAY_3B}
-    return {1: TEAMPLAYER_3B}
+    if kind == "teamplayer":
+        return {1: TEAMPLAYER_3B}
+    return {}
 
 
-def adapter_needed(claimed):
+def adapter_needed(claimed, rom=""):
     """Whether anybody has claimed a player that needs the adapter."""
+    if os.path.splitext(os.path.basename(rom))[0] in NO_ADAPTER:
+        return False
     return bool(claimed) and max(p.slot for p in claimed) + 1 >= ADAPTER_FROM
 
 
 def adapter_lines(core, claimed, rom=""):
     """(port, device) pairs plugging in the multiplayer adapter, if needed."""
     ports = ADAPTERS.get(core, {}).get("ports")
-    if not ports or not adapter_needed(claimed):
+    if not ports or not adapter_needed(claimed, rom):
         return []
     if ports == "genesis":
         ports = genesis_ports(rom)
@@ -2565,7 +2826,7 @@ def place_adapter(core, rom, claimed):
                 "port %d = %d" % (port, device) for port, device in lines)))
     if "options" in adapter:
         folder = os.path.join(cfg_dir("rgui_config_directory", OPTIONS_DIR), library)
-        values = adapter["options"] if adapter_needed(claimed) else {}
+        values = adapter["options"] if adapter_needed(claimed, rom) else {}
         place_game_file(
             os.path.join(folder, stem + ".opt"),
             [os.path.join(folder, parent + ".opt"),
@@ -2743,14 +3004,38 @@ def main():
     repick = Repick()
     asked = False
     while True:
-        code = play_once(args, cap, shader, fresh, asked, repick)
+        if repick.reseat:
+            code = reseat_once(args, shader, fresh, repick)
+        else:
+            code = play_once(args, cap, shader, fresh, asked, repick)
         if code != REPICK:
             return code
+        if repick.reseat:
+            continue          # straight back in, no picker
         # From here on the picker comes up whatever the pads say: being asked
         # for is the whole reason it is coming back. `fresh` is left alone --
         # it means "do not touch the automatic save", which is still true --
         # and the game resumes from the slot it was parked in instead.
         asked = True
+
+
+def reseat_once(args, shader, fresh, repick):
+    """Relaunch the parked game with every seated pad back on its player."""
+    load_slot = repick.slot
+    seats = repick.seats
+    repick.clear()
+    repick.slot = None
+    repick.reseat = False
+    pads = reseat_pads(seats)
+    override = write_override(pads, repick.board, fresh, slot=load_slot)
+    place_adapter(core_of(args), rom_of(args),
+                  [p for p in pads if p.slot is not None])
+    repick.seats = seats_of(pads)
+    for p in pads:
+        p.close()
+    repick.override = override
+    return run_retroarch(args, override, shader, repick=repick,
+                         load_slot=load_slot, seats=repick.seats)
 
 
 def play_once(args, cap, shader, fresh, asked, repick):
@@ -2926,6 +3211,8 @@ def play_once(args, cap, shader, fresh, asked, repick):
     if launch:
         place_adapter(core_of(args), rom_of(args),
                       [p for p in pads if p.slot is not None])
+        repick.seats = seats_of(pads)
+        repick.board = slots
     for p in pads:
         p.close()
     pygame.quit()
@@ -2938,11 +3225,11 @@ def play_once(args, cap, shader, fresh, asked, repick):
         # config, with the same people on the same ports.
         repick.override = previous
         return run_retroarch(args, previous, shader, repick=repick,
-                             load_slot=load_slot)
+                             load_slot=load_slot, seats=repick.seats)
 
     repick.override = override
     return run_retroarch(args, override, shader, repick=repick,
-                         load_slot=load_slot)
+                         load_slot=load_slot, seats=repick.seats)
 
 
 if __name__ == "__main__":

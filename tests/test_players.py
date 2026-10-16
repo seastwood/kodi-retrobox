@@ -644,6 +644,30 @@ sega = read(os.path.join(m.REMAP_DIR, "Genesis Plus GX Wide", "Mega Bomberman.rm
 check('input_libretro_device_p1 = "1537"' in sega and "_p2" not in sega,
       "anything else gets the Team Player on port 1, got %r" % sega)
 
+print("-- a Codemasters J-Cart gets no adapter; a listed game gets its own --")
+PUBLISHERS["Micro Machines 2.md"] = "Codemasters"
+m.place_adapter("genesis_plus_gx_wide", "/games/md/Micro Machines 2.md", [c0, c1, pro])
+check(not os.path.exists(os.path.join(m.REMAP_DIR, "Genesis Plus GX Wide",
+                                      "Micro Machines 2.rmp")),
+      "the cartridge has the ports; nothing is plugged in on top")
+m.place_adapter("genesis_plus_gx_wide",
+                "/games/md/Super Skidmarks (Europe) (J-Cart).md", [c0, c1, pro])
+check(not os.path.exists(os.path.join(m.REMAP_DIR, "Genesis Plus GX Wide",
+                                      "Super Skidmarks (Europe) (J-Cart).rmp")),
+      "nor for a dump that says J-Cart in its name, publisher or not")
+m.GENESIS_ADAPTER["Mega Bomberman"] = "wayplay"
+m.place_adapter("genesis_plus_gx_wide", "/games/md/Mega Bomberman.md", [c0, c1, pro])
+sega = read(os.path.join(m.REMAP_DIR, "Genesis Plus GX Wide", "Mega Bomberman.rmp"))
+check('input_libretro_device_p1 = "1025"' in sega,
+      "the per-game answer beats the publisher, got %r" % sega)
+del m.GENESIS_ADAPTER["Mega Bomberman"]
+
+print("-- a game that passes one pad round gets no adapter --")
+m.place_adapter("genesis_plus_gx_wide", "/games/md/Aerobiz (USA).md", [c0, c1, pro])
+check(not os.path.exists(os.path.join(m.REMAP_DIR, "Genesis Plus GX Wide",
+                                      "Aerobiz (USA).rmp")),
+      "Aerobiz: four players, one controller")
+
 print("-- PlayStation: a core option, kept on top of the core's own options --")
 os.makedirs(os.path.join(m.OPTIONS_DIR, "Beetle PSX HW"))
 open(os.path.join(m.OPTIONS_DIR, "Beetle PSX HW", "Beetle PSX HW.opt"), "w").write(
