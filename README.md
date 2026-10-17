@@ -176,7 +176,16 @@ edits them with a controller, so that needs no keyboard either.
 
 ### Controllers over Bluetooth
 
-The BLUETOOTH entry pairs a pad from the sofa, and a **Nintendo Switch Pro
+A controller pairs itself: hold its pairing button with Kodi on screen and
+within twenty seconds it is paired, trusted and connected, with a notice to
+say so. That is the [kodi-bluetooth](https://github.com/seastwood/kodi-bluetooth)
+add-on's autopair service, started by `install.sh`. It also fixes the pad that
+**wants pairing again** — one that lost its key for this machine (synced to a
+Switch, switched mode) and so fails every reconnection while still listed as
+paired: holding its pairing button gets it forgotten and paired afresh. It
+stays off the radio during games, and the BLUETOOTH screen switches it off.
+
+The BLUETOOTH entry pairs a pad by hand as well, and a **Nintendo Switch Pro
 Controller** needs two things arranged before it will pair with any Linux
 machine — so `install.sh` arranges them, rather than leaving somebody to find
 the forum thread the hard way:

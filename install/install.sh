@@ -306,6 +306,24 @@ else
   fi
 fi
 
+# Bluetooth joins them for the service it brings: autopair, which pairs any
+# controller held in pairing mode -- and re-pairs one that lost its key -- with
+# nobody opening the Bluetooth screen. Its installer links and starts it.
+BLUETOOTH_ADDON="$TARGET_HOME/.kodi/addons/script.bluetooth"
+if [ "$DRY" = 1 ]; then
+  skip "would run $BLUETOOTH_ADDON/install.sh"
+elif [ ! -x "$BLUETOOTH_ADDON/install.sh" ]; then
+  [ -d "$BLUETOOTH_ADDON" ] && warn "no install.sh in $BLUETOOTH_ADDON"
+elif [ "$TARGET_HOME" != "$HOME" ]; then
+  skip "not starting Bluetooth autopair (installing into $TARGET_HOME)"
+else
+  if "$BLUETOOTH_ADDON/install.sh" 2>&1 | sed 's/^/  /'; then
+    ok "Bluetooth add-on set up"
+  else
+    warn "the Bluetooth add-on did not finish; run $BLUETOOTH_ADDON/install.sh"
+  fi
+fi
+
 # ----------------------------------------------------------- fourth player --
 # Remote couch co-op: a guest opens a page somewhere else, plugs in their own
 # controller and takes a seat in the game on this television. Its own project
